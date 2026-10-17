@@ -3,12 +3,12 @@
 Every channel follows from the engine's own output, not a separate model:
 
 - throttle: drive force the lap needs, ``m * a + F_drag``, as a share of the
-  drive force available at that speed, grip and curvature (100% = at the
-  engine/traction/friction-circle limit);
+  drive force available at that speed and grip (100% = at the engine/traction limit);
 - brake: braking force the lap needs, ``-(m * a + F_drag)``, as a share of the
-  braking limit there. Drag helps slow the car, so brake effort is below 100% at speed;
-- steering: kinematic road-wheel angle ``atan(wheelbase * curvature)`` of the driven path;
-- gear: the gear the engine model uses at that speed (0 = no gearbox).
+  braking limit. Drag helps slow the car, so brake effort is below 100% at speed;
+- steering: kinematic road-wheel angle ``atan(wheelbase * curvature)``. The
+  centerline is lines and arcs, so steering steps at corner entry and exit;
+- no gear channel: the engine has no gearbox.
 """
 
 from __future__ import annotations
@@ -19,9 +19,11 @@ import numpy as np
 
 from racelab.car import Car
 from racelab.geometry import TrackGeometry
-from racelab.physics import aero_drag_force, braking_deceleration, drive_force, selected_gear
+from racelab.physics import aero_drag_force, braking_deceleration, drive_force
 from racelab.simulation import LapResult
 from racelab.track import Track
+
+WHEELBASE_M = 2.6
 
 
 @dataclass(frozen=True)
@@ -37,37 +39,34 @@ class Telemetry:
     brake_pct: np.ndarray
     steering_deg: np.ndarray
     """Positive steers left."""
-    gear: np.ndarray
     x_m: np.ndarray
     y_m: np.ndarray
 
 
 def build_telemetry(lap: LapResult, car: Car, track: Track, geometry: TrackGeometry) -> Telemetry:
-    """``lap`` must be ``car`` on ``track`` (weather applied); geometry places the samples."""
+    """``track`` must be the one the lap was simulated on (weather applied) so grip matches."""
     if not (lap.track_name == track.name == geometry.track_name):
         raise ValueError("lap, track and geometry must describe the same circuit")
-    s, v, a, k = lap.distance_m, lap.speed_mps, lap.acceleration_mps2, np.abs(lap.curvature_per_m)
+    s, v, a = lap.distance_m, lap.speed_mps, lap.acceleration_mps2
+    ends = np.cumsum([seg.length_m for seg in track.segments])
+    grip = np.array([seg.grip_multiplier for seg in track.segments])[np.minimum(np.searchsorted(ends, s, side="right"), len(ends) - 1)]
 
     drag = np.array([aero_drag_force(car, vi) for vi in v])
     needed = car.mass_kg * a + drag
-    available = np.array([drive_force(car, vi, g, ki) for vi, g, ki in zip(v, lap.step_grip, k)])
-    brake_limit = car.mass_kg * np.array([braking_deceleration(car, g, vi, ki) for vi, g, ki in zip(v, lap.step_grip, k)])
+    available = np.array([drive_force(car, vi, g) for vi, g in zip(v, grip)])
+    brake_limit = car.mass_kg * np.array([braking_deceleration(car, g) for g in grip])
     # The solver keeps |needed| within these limits; clip only absorbs float noise.
-    push, slow = np.maximum(needed, 0), np.maximum(-needed, 0)
-    throttle = np.clip(np.divide(push, available, out=np.zeros_like(push), where=available > 0), 0, 1) * 100
-    brake = np.clip(np.divide(slow, brake_limit, out=np.zeros_like(slow), where=brake_limit > 0), 0, 1) * 100
+    throttle = np.clip(np.where(needed > 0, needed / available, 0.0), 0, 1) * 100
+    brake = np.clip(np.where(needed < 0, -needed / brake_limit, 0.0), 0, 1) * 100
 
-    steering = np.degrees(np.arctan(car.wheelbase_m * lap.curvature_per_m))
-    gear = np.array([selected_gear(car, vi) for vi in v])
+    k = geometry.curvature_per_m[np.round(s / geometry.step_m).astype(int) % len(geometry.curvature_per_m)]
+    steering = np.degrees(np.arctan(WHEELBASE_M * k))
 
-    dt = 2 * lap.step_length_m / (v + np.roll(v, -1))
+    v_next = np.roll(v, -1)
+    dt = 2 * lap.step_m / (v + v_next)
     time = np.concatenate(([0.0], np.cumsum(dt)[:-1]))
-    cx, cy, ch = geometry.pose_at(s)
-    n = lap.lateral_offset_m
-    return Telemetry(
-        float(np.sum(dt)), lap.total_distance_m, s, time, v, throttle, brake, steering, gear,
-        cx - n * np.sin(ch), cy + n * np.cos(ch),
-    )
+    x, y, _ = geometry.pose_at(s)
+    return Telemetry(float(np.sum(dt)), lap.total_distance_m, s, time, v, throttle, brake, steering, x, y)
 
 
 def lap_summary(t: Telemetry) -> dict[str, float]:

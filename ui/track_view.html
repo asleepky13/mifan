@@ -60,7 +60,6 @@ const center = path(T.center, true), left = path(T.left, true), right = path(T.r
 const curbs = T.curbs.map(c => path(c, false));
 const runoff = T.runoff.map(r => ({ gravel: r.gravel, mid: path(r.mid, false), wall: path(r.wall, false) }));
 const armco = T.armco.map(a => path(a, false));
-const line = path({ x: F.x, y: F.y }, true);  // the driven racing line
 const trees = new Path2D(), crowns = new Path2D(), Tr = S.scenery.trees;
 for (let i = 0; i < Tr.x.length; i++) {
   trees.moveTo(Tr.x[i] + Tr.r[i], Tr.y[i]); trees.arc(Tr.x[i], Tr.y[i], Tr.r[i], 0, 2 * Math.PI);
@@ -141,12 +140,6 @@ function drawBody(L, B) {
     rect(-0.7, -0.28, 0.55, 0.56, '#222'); helmet(-0.42);
   }
 }
-function drawWing(L, B) {
-  if (!S.car.wing || S.car.wing === 'none') return;
-  const high = S.car.wing === 'high', span = B * (high ? 1.0 : 0.8), chord = high ? 0.45 : 0.25, x = -L / 2 - 0.15;
-  rect(x - chord, -span / 2, chord, span, '#1b1b1b');
-  if (high) { rect(x - chord - 0.05, -span / 2 - 0.08, chord + 0.1, 0.12, '#555'); rect(x - chord - 0.05, span / 2 - 0.04, chord + 0.1, 0.12, '#555'); }
-}
 function drawCar(s, scale, running) {
   ctx.save();
   ctx.translate(s.x, s.y); ctx.rotate(s.h);
@@ -156,7 +149,6 @@ function drawCar(s, scale, running) {
   drawEngine(body.L, body.W, running);
   drawWheels(body.L, body.W);
   drawBody(body.L, body.W);
-  drawWing(body.L, body.W);
   ctx.restore();
 }
 
@@ -207,7 +199,6 @@ function draw(s, running) {
     ctx.setLineDash([1.5, 1.5]); ctx.strokeStyle = '#c8102e'; ctx.stroke(c);
   }
   ctx.setLineDash([]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.25; ctx.stroke(left); ctx.stroke(right);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)'; ctx.lineWidth = 0.6; ctx.setLineDash([3, 3]); ctx.stroke(line); ctx.setLineDash([]);
   ctx.save();  // chequered start/finish line across the track
   ctx.translate(T.start.x, T.start.y); ctx.rotate(T.start.h);
   for (let i = 0; i < 2; i++) for (let j = 0; j < Math.ceil(T.width); j++) rect(i - 1, j - T.width / 2, 1, Math.min(1, T.width - j), (i + j) % 2 ? '#000' : '#fff');
