@@ -1,0 +1,183 @@
+"""RaceLab V1 — local web UI. Run with: streamlit run app.py"""
+
+from __future__ import annotations
+
+import altair as alt
+import pandas as pd
+import streamlit as st
+
+from racelab import HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, simulate_lap
+from racelab.summary import (
+    DRIVETRAIN_EFFICIENCY,
+    MAX_TRACTIVE_FORCE_N,
+    car_from_setup,
+    corner_average_speed_mps,
+    time_to_speed,
+)
+
+# key: (label, unit, min, max, default, step, format)
+SLIDERS = {
+    "mass_kg": ("Mass", "kg", 800, 1800, 1200, 10, "%d"),
+    "power_hp": ("Engine power", "hp", 100, 1000, 400, 10, "%d"),
+    "drag_coefficient": ("Drag coefficient Cd", "", 0.20, 0.60, 0.32, 0.01, "%.2f"),
+    "frontal_area_m2": ("Frontal area", "m²", 1.5, 3.5, 2.2, 0.05, "%.2f"),
+    "tire_friction": ("Tire grip μ", "", 0.8, 2.0, 1.2, 0.05, "%.2f"),
+    "max_braking_decel_mps2": ("Max braking", "m/s²", 5.0, 15.0, 10.0, 0.5, "%.1f"),
+}
+DEFAULTS = {key: spec[4] for key, spec in SLIDERS.items()}
+TRACKS = {t.name: t for t in (TECHNICAL_CIRCUIT, HIGH_SPEED_CIRCUIT)}
+KMH = 3.6
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Source+Serif+4:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap');
+:root { --fg:#000; --bg:#fff; --muted:#F5F5F5; --muted-fg:#525252; --line:#E5E5E5;
+        --display:'Playfair Display',Georgia,serif; --body:'Source Serif 4',Georgia,serif; --mono:'JetBrains Mono',monospace; }
+* { border-radius:0 !important; box-shadow:none !important; }
+[data-testid="stAppViewContainer"] { background-color:var(--bg);
+  background-image:repeating-linear-gradient(0deg, transparent 0 1px, rgba(0,0,0,.015) 1px 2px); background-size:100% 4px; }
+[data-testid="stHeader"] { background:transparent; }
+[data-testid="stSidebar"] { background:var(--muted); border-right:1px solid var(--fg); }
+[data-testid="stSidebar"] label p { font-family:var(--mono); font-size:.78rem; letter-spacing:.05em; }
+.block-container { max-width:72rem; }
+.stButton button { width:100%; background:var(--fg); color:var(--bg); border:2px solid var(--fg); font-family:var(--mono);
+  text-transform:uppercase; letter-spacing:.1em; font-size:.8rem; padding:.9rem 1rem; transition:none; }
+.stButton button:hover, .stButton button:active { background:var(--bg); color:var(--fg); border-color:var(--fg); }
+.stButton button:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
+.rl-kicker { font-family:var(--mono); font-size:.75rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted-fg); }
+h1.rl-hero { font-family:var(--display) !important; font-weight:900 !important; font-size:clamp(3.5rem, 12vw, 9rem) !important;
+  line-height:.9 !important; letter-spacing:-.05em; margin:.5rem 0 0 !important; padding:0 !important; }
+.rl-hero em { font-weight:400; }
+.rl-rule { display:flex; align-items:center; gap:1rem; margin:1.5rem 0 2rem; }
+.rl-rule::before { content:""; flex:1; border-top:4px solid var(--fg); }
+.rl-rule span { width:14px; height:14px; border:2px solid var(--fg); }
+h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; letter-spacing:-.025em; line-height:1 !important;
+  border-top:4px solid var(--fg); margin:3rem 0 1rem !important; padding:1.25rem 0 0 !important; }
+.rl-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(10.5rem, 1fr)); background:var(--fg); color:var(--bg);
+  background-image:repeating-linear-gradient(90deg, transparent 0 1px, rgba(255,255,255,.03) 1px 2px); background-size:4px 100%; }
+.rl-stat { padding:1.5rem 1.25rem; border-right:1px solid #333; border-bottom:1px solid #333; }
+.rl-stat .rl-kicker { color:#BDBDBD; }
+.rl-value { font-family:var(--display); font-size:2.75rem; line-height:1; margin:.75rem 0 .5rem; letter-spacing:-.025em; }
+.rl-unit { font-family:var(--mono); font-size:.8rem; margin-left:.35rem; letter-spacing:.05em; }
+.rl-base { font-family:var(--mono); font-size:.72rem; color:#BDBDBD; }
+.rl-table { width:100%; border-collapse:collapse; font-family:var(--body); }
+.rl-table th { font-family:var(--mono); font-size:.72rem; letter-spacing:.1em; text-transform:uppercase; text-align:left;
+  border-bottom:2px solid var(--fg); padding:.6rem .5rem; }
+.rl-table td { border-bottom:1px solid var(--line); padding:.6rem .5rem; font-size:1.05rem; }
+.rl-table td.num { font-family:var(--mono); font-size:.9rem; }
+.rl-changed { background:var(--fg); color:var(--bg); padding:.1rem .4rem; }
+.rl-note { font-family:var(--body); font-style:italic; color:var(--muted-fg); font-size:.95rem; margin-top:1rem; }
+.rl-notice { border:4px solid var(--fg); padding:1rem 1.25rem; font-family:var(--body); margin:1rem 0; }
+</style>
+"""
+
+
+@st.cache_data(max_entries=256, show_spinner=False)
+def run(setup: tuple[tuple[str, float], ...], track_name: str):
+    car = car_from_setup(**dict(setup))
+    lap = simulate_lap(car, TRACKS[track_name], step_m=2.0)
+    return lap, time_to_speed(car), corner_average_speed_mps(lap)
+
+
+def notice(text: str) -> None:
+    st.markdown(f'<div class="rl-notice">{text}</div>', unsafe_allow_html=True)
+
+
+def fmt(value: float | None, digits: int) -> str:
+    return "—" if value is None else f"{value:,.{digits}f}"
+
+
+def stat(label: str, unit: str, current: float | None, baseline: float | None, digits: int) -> str:
+    delta = "" if current is None or baseline is None else f" · Δ {current - baseline:+,.{digits}f}"
+    return (
+        f'<div class="rl-stat"><div class="rl-kicker">{label}</div>'
+        f'<div class="rl-value">{fmt(current, digits)}<span class="rl-unit">{unit}</span></div>'
+        f'<div class="rl-base">Baseline {fmt(baseline, digits)} {unit}{delta}</div></div>'
+    )
+
+
+def reset() -> None:
+    st.session_state.update(DEFAULTS)
+
+
+st.set_page_config(page_title="RaceLab", layout="wide")
+st.markdown(CSS, unsafe_allow_html=True)
+for key, value in DEFAULTS.items():
+    st.session_state.setdefault(key, value)
+
+with st.sidebar:
+    st.markdown('<div class="rl-kicker">Car setup</div>', unsafe_allow_html=True)
+    track_name = st.selectbox("Circuit", list(TRACKS))
+    for key, (label, unit, lo, hi, _, step, number_format) in SLIDERS.items():
+        st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
+    st.button("Reset to default →", on_click=reset)
+
+setup = {key: st.session_state[key] for key in SLIDERS}
+try:
+    lap, zero_to_100, corner = run(tuple(setup.items()), track_name)
+    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), track_name)
+except (ValueError, ArithmeticError) as exc:
+    notice(f"<strong>Simulation failed for this setup.</strong> {exc}")
+    st.stop()
+
+st.markdown(
+    f'<div class="rl-kicker">RaceLab V1 · {track_name} · {lap.total_distance_m / 1000:.2f} km</div>'
+    '<h1 class="rl-hero">Race<em>Lab</em></h1><div class="rl-rule"><span></span></div>',
+    unsafe_allow_html=True,
+)
+if not (lap.converged and lap.constraints_satisfied):
+    notice("The speed profile did not fully converge or breaks a limit; treat these numbers with caution.")
+
+st.markdown(
+    '<div class="rl-stats">'
+    + stat("Lap time", "s", lap.lap_time_s, base_lap.lap_time_s, 2)
+    + stat("Top speed", "km/h", lap.max_speed_mps * KMH, base_lap.max_speed_mps * KMH, 0)
+    + stat("Average speed", "km/h", lap.average_speed_mps * KMH, base_lap.average_speed_mps * KMH, 1)
+    + stat("Cornering · avg corner speed", "km/h", corner and corner * KMH, base_corner and base_corner * KMH, 1)
+    + stat("Acceleration · 0–100 km/h", "s", zero_to_100, base_zero_to_100, 2)
+    + "</div>",
+    unsafe_allow_html=True,
+)
+
+st.markdown('<h2 class="rl-h2">Speed over the lap</h2>', unsafe_allow_html=True)
+profiles = pd.concat(
+    pd.DataFrame({"Distance (m)": r.distance_m, "Speed (km/h)": r.speed_mps * KMH, "Setup": name})
+    for name, r in (("Current", lap), ("Baseline (default)", base_lap))
+)
+series = alt.Scale(domain=["Current", "Baseline (default)"], range=["#000000", "#525252"])
+legend = alt.Legend(
+    orient="top", title=None, labelFont="JetBrains Mono", symbolType="stroke", symbolSize=600, symbolStrokeWidth=2, columnPadding=24
+)
+chart = (
+    alt.Chart(profiles)
+    .mark_line(strokeWidth=1.75)
+    .encode(
+        x=alt.X("Distance (m):Q", scale=alt.Scale(nice=False), axis=alt.Axis(tickCount=8, format=",.0f")),
+        y=alt.Y("Speed (km/h):Q"),
+        color=alt.Color("Setup:N", scale=series, legend=legend),
+        strokeDash=alt.StrokeDash(
+            "Setup:N", scale=alt.Scale(domain=series.domain, range=[[1, 0], [6, 4]]), legend=legend
+        ),
+    )
+    .properties(height=360)
+    .configure_axis(
+        gridColor="#E5E5E5", domainColor="#000", tickColor="#000", labelColor="#000", titleColor="#000",
+        labelFont="JetBrains Mono", titleFont="JetBrains Mono", titleFontWeight="normal",
+    )
+    .configure_view(stroke="#000")
+)
+st.altair_chart(chart, theme=None, width="stretch")
+
+st.markdown('<h2 class="rl-h2">Setup</h2>', unsafe_allow_html=True)
+rows = "".join(
+    f"<tr><td>{label}</td><td class='num'><span class='{'rl-changed' if setup[key] != DEFAULTS[key] else ''}'>"
+    f"{number_format % setup[key]}</span></td><td class='num'>{number_format % DEFAULTS[key]}</td><td class='num'>{unit}</td></tr>"
+    for key, (label, unit, _, _, _, _, number_format) in SLIDERS.items()
+)
+st.markdown(
+    f"<table class='rl-table'><tr><th>Parameter</th><th>Current</th><th>Default</th><th>Unit</th></tr>{rows}</table>"
+    f"<p class='rl-note'>Highlighted values differ from the default. Fixed for every setup: drivetrain efficiency "
+    f"{DRIVETRAIN_EFFICIENCY:.0%}, maximum tractive force {MAX_TRACTIVE_FORCE_N:,.0f} N. Results come from the RaceLab "
+    f"point-mass engine: no downforce, gears, weight transfer or combined braking-and-cornering grip.</p>",
+    unsafe_allow_html=True,
+)
