@@ -21,7 +21,9 @@ A browser tab opens at http://localhost:8501. The sidebar holds the circuit and 
 
 **Circuits and weather.** The sidebar picks Monza, Monaco or Spa and a weather preset. Weather scales track grip, so cornering speeds and braking distances drop in the wet; the track view darkens the asphalt and draws rain. The grip factors are illustrative, not calibrated.
 
-**On track (V2).** A top-down view of the circuit with asphalt, grass, curbs and the chequered start/finish line. The car moves at the simulated speed. The view has Start, Pause and Reset controls, a sim-speed selector (0.25×–8×), an Overview or Follow-car camera, and a readout of speed, lap, lap time, last lap and status. The body colour comes from the sidebar picker.
+**Garage.** Pick a body (Standard Kart, Comet Coupe, Bulldog Truck, Feather Frame), wheels (Standard, Slicks, Monster, Rollers) and an engine (Standard, Turbo, Electric, Lightweight). Each part's effect is listed under its picker. Parts feed the engine, so lap time, top speed, cornering and the car's motion on track all change; the track view draws the chosen parts. Reset to default also resets the parts.
+
+**On track (V2).** A top-down view of the circuit with asphalt, curbs and the chequered start/finish line. Around it: gravel traps outside slow corners, tarmac run-off outside fast ones, tyre walls, guardrails, trees, a grandstand and pit garages, all placed from the track geometry. The car moves at the simulated speed. The view has Start, Pause and Reset controls, a sim-speed selector (0.25×–8×), an Overview or Follow-car camera, and a readout of speed, lap, lap time, last lap and status. The body colour comes from the sidebar picker.
 
 How it fits together:
 - `racelab/geometry.py` builds the centerline from the segment list.
@@ -68,6 +70,7 @@ for name, s in sensitivity_analysis(car, TECHNICAL_CIRCUIT).items():
 | `racelab/geometry.py` | `build_geometry` → `TrackGeometry` (centerline x/y, heading, signed curvature, `pose_at`, `offset`, closure error); `Camera` (fit-to-view and chase camera, world to screen and back). |
 | `racelab/playback.py` | `LapPlayback.from_lap(lap, geometry)`; `state_at(t)` → `VehicleState` (lap, lap time, distance, x, y, heading, speed). |
 | `racelab/config.py` | Future-facing configuration: `TireCompound`, `AeroPackage`, `BodyPackage`, `VehicleConfig.to_car()`. Fields listed in `NOT_MODELED` (tire temperature and wear, downforce) are stored but have **no effect** yet. |
+| `racelab/parts.py` | Kart-style `PARTS` in three categories (body, wheels, engine). `apply_parts(car, parts)` adds mass and scales power, drag, frontal area, grip, braking and traction, so each part changes the simulated lap. The values are game-style balance, not measured data. |
 | `ui/track_view.py`, `ui/track_view.html` | Renders the canvas view. Rendering only, no physics. |
 | `racelab/physics.py` | Drag, drive force, net acceleration, braking, cornering speed and a top-speed bound. |
 | `racelab/simulation.py` | `simulate_lap` → `LapResult`. |

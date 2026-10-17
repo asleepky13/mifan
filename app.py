@@ -9,6 +9,7 @@ import streamlit as st
 from racelab import CIRCUITS, WEATHER, simulate_lap
 from racelab.config import BodyPackage
 from racelab.geometry import build_geometry
+from racelab.parts import CATEGORIES, DEFAULT_PARTS, PARTS_BY_CATEGORY, apply_parts
 from racelab.playback import LapPlayback
 from racelab.summary import (
     DRIVETRAIN_EFFICIENCY,
@@ -29,6 +30,7 @@ SLIDERS = {
     "max_braking_decel_mps2": ("Max braking", "m/s²", 5.0, 15.0, 10.0, 0.5, "%.1f"),
 }
 DEFAULTS = {key: spec[4] for key, spec in SLIDERS.items()}
+PART_DEFAULTS = {f"part_{c}": DEFAULT_PARTS[c] for c in CATEGORIES}
 TRACKS = {t.name: t for t in CIRCUITS}
 WEATHERS = {w.name: w for w in WEATHER}
 KMH = 3.6
@@ -78,8 +80,8 @@ h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; l
 
 
 @st.cache_data(max_entries=256, show_spinner=False)
-def run(setup: tuple[tuple[str, float], ...], track_name: str, weather_name: str):
-    car = car_from_setup(**dict(setup))
+def run(setup: tuple[tuple[str, float], ...], parts: tuple[str, ...], track_name: str, weather_name: str):
+    car = apply_parts(car_from_setup(**dict(setup)), [PARTS_BY_CATEGORY[c][k] for c, k in zip(CATEGORIES, parts)])
     lap = simulate_lap(car, TRACKS[track_name].in_weather(WEATHERS[weather_name]), step_m=2.0)
     return lap, time_to_speed(car), corner_average_speed_mps(lap)
 
@@ -108,26 +110,34 @@ def stat(label: str, unit: str, current: float | None, baseline: float | None, d
 
 def reset() -> None:
     st.session_state.update(DEFAULTS)
+    st.session_state.update(PART_DEFAULTS)
 
 
 st.set_page_config(page_title="RaceLab", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
-for key, value in DEFAULTS.items():
+for key, value in {**DEFAULTS, **PART_DEFAULTS}.items():
     st.session_state.setdefault(key, value)
 
 with st.sidebar:
     st.markdown('<div class="rl-kicker">Car setup</div>', unsafe_allow_html=True)
     track_name = st.selectbox("Circuit", list(TRACKS))
     weather_name = st.selectbox("Weather", list(WEATHERS))
+    st.markdown('<div class="rl-kicker">Garage</div>', unsafe_allow_html=True)
+    for category in CATEGORIES:
+        options = PARTS_BY_CATEGORY[category]
+        chosen = st.selectbox(category.title(), list(options), format_func=lambda k, o=options: o[k].name, key=f"part_{category}")
+        st.caption(options[chosen].describe())
+    st.markdown('<div class="rl-kicker">Tuning</div>', unsafe_allow_html=True)
     for key, (label, unit, lo, hi, _, step, number_format) in SLIDERS.items():
         st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
     st.button("Reset to default →", on_click=reset)
     body_color = st.color_picker("Body color", BodyPackage().color_hex)
 
 setup = {key: st.session_state[key] for key in SLIDERS}
+parts = tuple(st.session_state[f"part_{c}"] for c in CATEGORIES)
 try:
-    lap, zero_to_100, corner = run(tuple(setup.items()), track_name, weather_name)
-    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), track_name, weather_name)
+    lap, zero_to_100, corner = run(tuple(setup.items()), parts, track_name, weather_name)
+    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), tuple(DEFAULT_PARTS.values()), track_name, weather_name)
 except (ValueError, ArithmeticError) as exc:
     notice(f"<strong>Simulation failed for this setup.</strong> {exc}")
     st.stop()
@@ -154,13 +164,21 @@ st.markdown(
 st.markdown('<h2 class="rl-h2">On track</h2>', unsafe_allow_html=True)
 track_geometry = geometry(track_name)
 # Trusted HTML: built here from engine output, no user-supplied markup.
-st.iframe(track_view_html(track_geometry, LapPlayback.from_lap(lap, track_geometry), BodyPackage(color_hex=body_color), WEATHERS[weather_name]), height=840)
+car_look = {**dict(zip(CATEGORIES, parts)), "color": BodyPackage(color_hex=body_color).color_hex}
+st.iframe(
+    track_view_html(
+        track_geometry, LapPlayback.from_lap(lap, track_geometry), car_look, WEATHERS[weather_name],
+        first_straight_m=TRACKS[track_name].segments[0].length_m,
+    ),
+    height=860,
+)
 st.markdown(
     "<p class='rl-note'>Circuits are simplified layouts inspired by the real tracks: corner order and lap length "
     "follow the originals, exact shapes do not. Weather scales track grip (Dry 100%, Damp 85%, Wet 70%, Heavy rain 55%); "
     "these factors are illustrative. The car follows the track centerline at the simulated speed: the engine is a point mass, "
     "so there is no racing line, slip or yaw. Every lap is the same flying lap. In the overview the car is drawn "
-    "larger than scale so it stays visible.</p>",
+    "larger than scale so it stays visible. Garage parts change mass, power, drag, grip, braking and traction "
+    "(effects listed under each part), so they change the lap; their values are game-style balance, not measured data.</p>",
     unsafe_allow_html=True,
 )
 
@@ -198,6 +216,10 @@ rows = "".join(
     f"<tr><td>{label}</td><td class='num'><span class='{'rl-changed' if setup[key] != DEFAULTS[key] else ''}'>"
     f"{number_format % setup[key]}</span></td><td class='num'>{number_format % DEFAULTS[key]}</td><td class='num'>{unit}</td></tr>"
     for key, (label, unit, _, _, _, _, number_format) in SLIDERS.items()
+) + "".join(
+    f"<tr><td>{c.title()}</td><td class='num'><span class='{'rl-changed' if k != DEFAULT_PARTS[c] else ''}'>"
+    f"{PARTS_BY_CATEGORY[c][k].name}</span></td><td class='num'>{PARTS_BY_CATEGORY[c][DEFAULT_PARTS[c]].name}</td><td class='num'></td></tr>"
+    for c, k in zip(CATEGORIES, parts)
 )
 st.markdown(
     f"<table class='rl-table'><tr><th>Parameter</th><th>Current</th><th>Default</th><th>Unit</th></tr>{rows}</table>"

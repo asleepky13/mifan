@@ -23,6 +23,16 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(at.slider(key="power_hp").value, 400)
         self.assertEqual(lap_time(at), default)
 
+    def test_garage_part_changes_lap_and_reset_restores_it(self):
+        at = AppTest.from_file("../app.py", default_timeout=30).run()
+        default = lap_time(at)
+        at.selectbox(key="part_engine").set_value("turbo").run()
+        self.assertFalse(at.exception)
+        self.assertNotEqual(lap_time(at), default)
+        at.button[0].click().run()
+        self.assertEqual(at.selectbox(key="part_engine").value, "standard")
+        self.assertEqual(lap_time(at), default)
+
     def test_every_slider_extreme_renders(self):
         at = AppTest.from_file("../app.py", default_timeout=30).run()
         for slider in at.slider:
