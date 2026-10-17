@@ -1,0 +1,17 @@
+[theme]
+base = "light"
+primaryColor = "#000000"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#000000"
+borderColor = "#000000"
+baseRadius = "none"
+font = "'Source Serif 4', Georgia, serif"
+headingFont = "'Playfair Display', Georgia, serif"
+codeFont = "'JetBrains Mono', monospace"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

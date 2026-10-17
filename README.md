@@ -10,6 +10,15 @@ pip install -r requirements.txt
 python -m unittest discover -v
 ```
 
+## Web UI (V1)
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+A browser tab opens at http://localhost:8501. The sidebar holds the circuit and car sliders. The main area shows lap time, top speed, average speed, average corner speed and 0–100 km/h time against the default setup, plus a speed-versus-distance chart and the setup table. Every number comes from the engine below. `racelab/summary.py` converts horsepower to watts and computes 0–100 km/h by integrating `dt = dv / a(v)` with the engine's `net_acceleration`. Drivetrain efficiency (88%) and maximum tractive force (12 kN) are fixed in the UI.
+
 ## Usage
 
 ```python
