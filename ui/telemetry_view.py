@@ -15,7 +15,7 @@ _TEMPLATE = Path(__file__).with_name("telemetry.html")
 
 def _channels(t: Telemetry) -> dict:
     r = lambda a, d: np.round(a, d).tolist()
-    return {"speed": r(t.speed_mps * 3.6, 1), "throttle": r(t.throttle_pct, 1), "brake": r(t.brake_pct, 1), "steer": r(t.steering_deg, 2)}
+    return {"speed": r(t.speed_mps * 3.6, 1), "throttle": r(t.throttle_pct, 1), "brake": r(t.brake_pct, 1), "steer": r(t.steering_deg, 2), "gear": t.gear.astype(int).tolist()}
 
 
 def telemetry_payload(current: Telemetry, baseline: Telemetry) -> dict:

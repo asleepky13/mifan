@@ -6,13 +6,16 @@ import streamlit as st
 
 from racelab import CIRCUITS, WEATHER, simulate_lap
 from racelab.config import BodyPackage
-from racelab.geometry import build_geometry
+from racelab.geometry import build_geometry, build_racing_line
 from racelab.parts import CATEGORIES, DEFAULT_PARTS, PARTS_BY_CATEGORY, apply_parts
 from racelab.playback import LapPlayback
 from racelab.telemetry import build_telemetry
 from racelab.summary import (
+    CG_HEIGHT_M,
     DRIVETRAIN_EFFICIENCY,
+    GEARBOX,
     MAX_TRACTIVE_FORCE_N,
+    REAR_WEIGHT_FRACTION,
     car_from_setup,
     corner_average_speed_mps,
     time_to_speed,
@@ -82,13 +85,19 @@ h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; l
 @st.cache_data(max_entries=256, show_spinner=False)
 def run(setup: tuple[tuple[str, float], ...], parts: tuple[str, ...], track_name: str, weather_name: str):
     car = apply_parts(car_from_setup(**dict(setup)), [PARTS_BY_CATEGORY[c][k] for c, k in zip(CATEGORIES, parts)])
-    lap = simulate_lap(car, TRACKS[track_name].in_weather(WEATHERS[weather_name]), step_m=2.0)
+    track = TRACKS[track_name].in_weather(WEATHERS[weather_name])
+    lap = simulate_lap(car, track, step_m=2.0, racing_line=racing_line(track_name))
     return car, lap, time_to_speed(car), corner_average_speed_mps(lap)
 
 
 @st.cache_data(show_spinner=False)
 def geometry(track_name: str):
     return build_geometry(TRACKS[track_name], step_m=2.0)
+
+
+@st.cache_data(show_spinner=False)
+def racing_line(track_name: str):
+    return build_racing_line(geometry(track_name))
 
 
 def notice(text: str) -> None:
@@ -175,9 +184,11 @@ st.iframe(
 st.markdown(
     "<p class='rl-note'>Circuits are simplified layouts inspired by the real tracks: corner order and lap length "
     "follow the originals, exact shapes do not. Weather scales track grip (Dry 100%, Damp 85%, Wet 70%, Heavy rain 55%); "
-    "these factors are illustrative. The car follows the track centerline at the simulated speed: the engine is a point mass, "
-    "so there is no racing line, slip or yaw. Every lap is the same flying lap. In the overview the car is drawn "
-    "larger than scale so it stays visible. Garage parts change mass, power, drag, grip, braking and traction "
+    "these factors are illustrative. The car drives a minimum-curvature racing line (the faint line): wide on corner entry, "
+    "inside at the apex, wide on exit, and back to the middle on long straights. The lap is simulated on that line, so its "
+    "speed is real; the car is a point mass on it, so there is no slip or yaw. Every lap is the same flying lap. In the "
+    "overview the car is drawn larger than scale so it stays visible. Garage parts change mass, power, drag, grip, braking, "
+    "traction and downforce "
     "(effects listed under each part), so they change the lap; their values are game-style balance, not measured data.</p>",
     unsafe_allow_html=True,
 )
@@ -193,8 +204,9 @@ st.iframe(
 )
 st.markdown(
     "<p class='rl-note'>Throttle and brake are the drive and braking force the simulated lap needs, as a share of what "
-    "the car can deliver at that speed and grip. Steering is the kinematic road-wheel angle for the track curvature "
-    "(2.6 m wheelbase). There is no gear channel: the engine has no gearbox. Delta below zero means the current setup is ahead.</p>",
+    "the car can deliver at that speed, grip and cornering load (friction circle). Steering is the kinematic road-wheel "
+    "angle for the racing line's curvature (2.6 m wheelbase). Gear is the gear the six-speed gearbox model uses at that "
+    "speed. Delta below zero means the current setup is ahead.</p>",
     unsafe_allow_html=True,
 )
 
@@ -210,8 +222,10 @@ rows = "".join(
 )
 st.markdown(
     f"<table class='rl-table'><tr><th>Parameter</th><th>Current</th><th>Default</th><th>Unit</th></tr>{rows}</table>"
-    f"<p class='rl-note'>Highlighted values differ from the default. Fixed for every setup: drivetrain efficiency "
-    f"{DRIVETRAIN_EFFICIENCY:.0%}, maximum tractive force {MAX_TRACTIVE_FORCE_N:,.0f} N. Results come from the RaceLab "
-    f"point-mass engine: no downforce, gears, weight transfer or combined braking-and-cornering grip.</p>",
+    f"<p class='rl-note'>Highlighted values differ from the default. Fixed for every setup: rear-wheel drive, "
+    f"{len(GEARBOX.ratios)}-speed gearbox (redline {GEARBOX.redline_rpm:,.0f} rpm), drivetrain efficiency "
+    f"{DRIVETRAIN_EFFICIENCY:.0%}, maximum tractive force {MAX_TRACTIVE_FORCE_N:,.0f} N, {REAR_WEIGHT_FRACTION:.0%} of the "
+    f"weight on the rear axle, centre of gravity {CG_HEIGHT_M} m high. The RaceLab engine models downforce, gears, "
+    f"load transfer onto the driven axle and the friction circle; it does not model suspension, tyre temperature or slip angles.</p>",
     unsafe_allow_html=True,
 )
