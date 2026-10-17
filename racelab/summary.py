@@ -1,23 +1,17 @@
-"""Headline numbers for the UI and the app's car, derived from the engine (no new physics)."""
+"""Headline numbers for the UI, derived from the existing engine (no new physics)."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from racelab.car import Car, Gearbox
+from racelab.car import Car
 from racelab.physics import net_acceleration
 from racelab.simulation import LapResult
 
 HP_TO_W = 745.7  # mechanical horsepower
-# The UI does not expose these; every setup uses the same drivetrain and chassis.
+# The UI does not expose these; every setup uses the same drivetrain.
 DRIVETRAIN_EFFICIENCY = 0.88
 MAX_TRACTIVE_FORCE_N = 12_000.0
-# Six speeds in a geometric progression: first gear redlines near 90 km/h, sixth near 300 km/h.
-GEARBOX = Gearbox(ratios=(11.05, 8.70, 6.85, 5.39, 4.24, 3.33))
-DRIVEN_AXLE = "rear"
-REAR_WEIGHT_FRACTION = 0.55
-CG_HEIGHT_M = 0.45
-WHEELBASE_M = 2.6
 
 
 def car_from_setup(
@@ -40,11 +34,6 @@ def car_from_setup(
         max_braking_decel_mps2=float(max_braking_decel_mps2),
         max_tractive_force_n=MAX_TRACTIVE_FORCE_N,
         drivetrain_efficiency=DRIVETRAIN_EFFICIENCY,
-        driven_axle=DRIVEN_AXLE,
-        rear_weight_fraction=REAR_WEIGHT_FRACTION,
-        cg_height_m=CG_HEIGHT_M,
-        wheelbase_m=WHEELBASE_M,
-        gearbox=GEARBOX,
     )
 
 

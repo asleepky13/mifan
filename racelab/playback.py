@@ -1,8 +1,8 @@
 """Place a simulated lap on the track: vehicle state (position, heading, speed) over time.
 
-The car follows the path the lap was simulated on: the centerline, or a
-racing line across the track width. It is a point mass on that path, so there
-is no slip or yaw. Every lap is the same flying lap.
+The engine is a point mass on the centerline, so the car follows the
+centerline exactly; there is no racing line, slip or yaw dynamics. Every lap
+is the same flying lap.
 """
 
 from __future__ import annotations
@@ -48,17 +48,10 @@ class LapPlayback:
             raise ValueError(f"lap on {lap.track_name!r} does not match geometry of {geometry.track_name!r}")
         speed = np.append(lap.speed_mps, lap.speed_mps[0])
         distance = np.append(lap.distance_m, lap.total_distance_m)
-        # Same step-time formula as the lap time, over the distance actually driven.
-        time = np.concatenate(([0.0], np.cumsum(2 * lap.step_length_m / (speed[:-1] + speed[1:]))))
-        cx, cy, ch = geometry.pose_at(lap.distance_m)
-        n = lap.lateral_offset_m
-        x, y = cx - n * np.sin(ch), cy + n * np.cos(ch)
-        if np.any(n):
-            # Heading along the driven path: direction of the chord through each sample's neighbours.
-            ch = np.unwrap(np.arctan2(np.roll(y, -1) - np.roll(y, 1), np.roll(x, -1) - np.roll(x, 1)))
-        # Close the loop at the start sample, keeping heading continuous (no 2*pi jump).
-        x, y = np.append(x, x[0]), np.append(y, y[0])
-        heading = np.append(ch, ch[0] + geometry.total_turn_rad)
+        time = np.concatenate(([0.0], np.cumsum(2 * np.diff(distance) / (speed[:-1] + speed[1:]))))
+        x, y, heading = geometry.pose_at(distance)
+        # pose_at wraps the closing sample back to the start; keep heading continuous instead.
+        heading[-1] = heading[0] + geometry.total_turn_rad
         return cls(float(time[-1]), time, distance, speed, x, y, heading)
 
     def state_at(self, time_s: float) -> VehicleState:

@@ -1,9 +1,12 @@
-"""Closed-circuit track model and two fictional circuits. Lengths in metres."""
+"""Closed-circuit track model and four F1-inspired circuits. Lengths in metres."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+
+
+ENVIRONMENTS = ("parkland", "harbour", "forest", "desert")
 
 
 @dataclass(frozen=True)
@@ -42,10 +45,14 @@ class Track:
     name: str
     segments: tuple[Segment, ...]
     width_m: float = 12.0
+    environment: str = "parkland"
+    """Landscape the renderer draws around the track: one of ``ENVIRONMENTS``."""
 
     def __post_init__(self) -> None:
         if not self.segments:
             raise ValueError("a track needs at least one segment")
+        if self.environment not in ENVIRONMENTS:
+            raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {self.environment!r}")
         if not (math.isfinite(self.width_m) and self.width_m > 0):
             raise ValueError(f"width_m must be positive and finite, got {self.width_m!r}")
 
@@ -121,6 +128,7 @@ MONZA = Track(
         _corner(174, 178, RIGHT, label="Parabolica"),
     ),
     width_m=14.0,
+    environment="parkland",
 )
 
 MONACO = Track(
@@ -157,6 +165,7 @@ MONACO = Track(
         _corner(27, 60.3, RIGHT, label="Anthony Noghes"),
     ),
     width_m=9.0,
+    environment="harbour",
 )
 
 SPA = Track(
@@ -191,9 +200,42 @@ SPA = Track(
         _corner(16.5, 32.7, LEFT),
     ),
     width_m=13.0,
+    environment="forest",
 )
 
-CIRCUITS = (MONZA, MONACO, SPA)
+BAHRAIN = Track(
+    "Bahrain (Sakhir)",
+    (
+        Segment(1821.8, label="Main straight"),
+        _corner(21.5, 101.1, RIGHT, label="Turn 1"),
+        _corner(48, 38.7, LEFT, label="Turn 2"),
+        _corner(143.5, 51.1, RIGHT, label="Turn 3"),
+        Segment(361.9),
+        _corner(36, 92, RIGHT, label="Turn 4"),
+        Segment(226.8),
+        _corner(72, 48.6, LEFT, label="Turn 5"),
+        _corner(72, 61, RIGHT, label="Turn 6"),
+        _corner(72, 39, LEFT, label="Turn 7"),
+        Segment(253.0),
+        _corner(18, 160.1, RIGHT, label="Turn 8 hairpin"),
+        Segment(200.2),
+        _corner(48, 59.7, LEFT, label="Turn 9"),
+        _corner(30, 99.7, LEFT, label="Turn 10"),
+        Segment(452.2, label="Back straight"),
+        _corner(60, 71, LEFT, label="Turn 11"),
+        Segment(244.8),
+        _corner(179.5, 68.7, RIGHT, label="Turn 12"),
+        Segment(209.7),
+        _corner(48, 68.6, RIGHT, label="Turn 13"),
+        Segment(612.0),
+        _corner(36, 87, RIGHT, label="Turn 14"),
+        _corner(72, 27.1, RIGHT, label="Turn 15"),
+    ),
+    width_m=15.0,
+    environment="desert",
+)
+
+CIRCUITS = (MONZA, MONACO, SPA, BAHRAIN)
 
 # Phase 1 names, kept for existing callers.
 TECHNICAL_CIRCUIT = MONACO
