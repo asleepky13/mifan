@@ -5,10 +5,10 @@ import numpy as np
 
 from racelab.physics import braking_deceleration, cornering_speed
 from racelab.simulation import simulate_lap
-from racelab.track import HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, Segment, Track
+from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track, Weather
 from tests import sports_car
 
-TRACKS = (TECHNICAL_CIRCUIT, HIGH_SPEED_CIRCUIT)
+TRACKS = CIRCUITS
 
 
 class LapTest(unittest.TestCase):
@@ -81,6 +81,22 @@ class LapTest(unittest.TestCase):
         car = sports_car()
         r = simulate_lap(car, track, 10.0)
         self.assertLessEqual(r.speed_mps.min(), cornering_speed(10, car.tire_friction) + 1e-6)
+
+    def test_weather_scales_grip_and_wetter_is_slower(self):
+        car = sports_car()
+        for track in CIRCUITS:
+            times = [simulate_lap(car, track.in_weather(w)).lap_time_s for w in WEATHER]
+            with self.subTest(track=track.name, times=times):
+                self.assertEqual(times, sorted(times))
+                self.assertLess(times[0], times[-1])
+        wet = TECHNICAL_CIRCUIT.in_weather(Weather("Test", 0.5))
+        self.assertEqual([s.grip_multiplier for s in wet.segments], [s.grip_multiplier * 0.5 for s in TECHNICAL_CIRCUIT.segments])
+        self.assertEqual(wet.name, TECHNICAL_CIRCUIT.name)
+
+    def test_invalid_weather_rejected(self):
+        for kwargs in ({"grip_multiplier": 0.0}, {"grip_multiplier": 1.0, "rain_intensity": 1.5}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                Weather("bad", **kwargs)
 
     def test_rejects_bad_step(self):
         for step in (0.0, -1.0, math.nan, 1e9):
