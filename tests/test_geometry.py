@@ -11,7 +11,7 @@ from racelab.simulation import simulate_lap
 from racelab.tires import tyre_stint
 from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
 from tests import sports_car
-from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, inside_loop, scene, track_view_html
+from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, inside_loop, inside_polygon, scene, track_view_html
 
 TRACKS = CIRCUITS
 
@@ -191,7 +191,7 @@ class SceneTest(unittest.TestCase):
                 for b in data["scenery"]["buildings"]:
                     self.assertTrue(np.all(distance_to_track(geometry, np.array(b["x"]), np.array(b["y"])) > geometry.width_m / 2))
                 runoff = data["track"]["runoff"]
-                self.assertEqual(any(r["gravel"] for r in runoff), track.environment != "desert")  # Sakhir: tarmac run-off
+                self.assertEqual(any(r["gravel"] for r in runoff), track.environment in ("parkland", "forest"))  # tarmac in the desert and the city
                 # Monza's Curva Grande (r ~350 m) is fast, so not every corner gets gravel.
                 if track.name.startswith("Monza"):
                     self.assertFalse(all(r["gravel"] for r in runoff))
@@ -206,14 +206,30 @@ class SceneTest(unittest.TestCase):
             trees_per_km2[track.environment] = len(data["scenery"]["trees"]["x"]) / ((x1 - x0) * (y1 - y0) / 1e6)
         self.assertEqual(max(trees_per_km2, key=trees_per_km2.get), "forest")
         self.assertEqual(min(trees_per_km2, key=trees_per_km2.get), "desert")
-        harbour = scenes["harbour"]["scenery"]
+        self.assertEqual(scenes["parkland"]["scenery"]["harbour"], {})
         geometry = build_geometry(TECHNICAL_CIRCUIT)
-        self.assertGreater(len(harbour["blocks"]["x"]), 20)
-        self.assertGreater(len(harbour["yachts"]["x"]), 5)
-        self.assertTrue(inside_loop(geometry, np.array(harbour["yachts"]["x"]), np.array(harbour["yachts"]["y"])).all())
-        for kind in ("blocks", "trees"):
-            self.assertFalse(inside_loop(geometry, np.array(harbour[kind]["x"]), np.array(harbour[kind]["y"])).any())
-        self.assertEqual(scenes["parkland"]["scenery"]["blocks"], {})
+
+    def test_monaco_sea_lies_beside_the_circuit_not_inside_it(self):
+        track = TECHNICAL_CIRCUIT
+        geometry = build_geometry(track)
+        h = scene(geometry, tyre_stint(sports_car(), track), environment="harbour", seafront_m=track.seafront_m)["scenery"]["harbour"]
+        sea_x, sea_y = np.array(h["sea"]["x"]), np.array(h["sea"]["y"])
+        in_sea = lambda d: inside_polygon(sea_x, sea_y, np.array(d["x"]), np.array(d["y"]))
+        self.assertFalse(in_sea({"x": geometry.x_m, "y": geometry.y_m}).any())  # no track in the water
+        self.assertFalse(inside_loop(geometry, sea_x, sea_y).any())               # the sea is outside the loop
+        quay = distance_to_track(geometry, np.array(h["quay"]["x"]), np.array(h["quay"]["y"]))
+        self.assertGreater(quay.min(), geometry.width_m / 2 + 10)                  # a quay between track and water
+        self.assertGreater(len(h["piers"]), 3)
+        self.assertGreater(len(h["yachts"]["x"]), 40)
+        self.assertTrue(in_sea(h["yachts"]).all())
+        self.assertGreater(len(h["blocks"]["x"]), 100)
+        self.assertFalse(in_sea(h["blocks"]).any())
+        self.assertTrue(np.all(distance_to_track(geometry, np.array(h["blocks"]["x"]), np.array(h["blocks"]["y"])) > geometry.width_m / 2))
+        self.assertFalse(in_sea(h["pool"]).any())
+        self.assertGreater(len(h["tunnel"]["x"]), 100)
+
+    def test_unknown_environment_rejected(self):
+        geometry = build_geometry(TECHNICAL_CIRCUIT)
         with self.assertRaises(ValueError):
             scene(geometry, tyre_stint(sports_car(), TECHNICAL_CIRCUIT), environment="lunar")
 

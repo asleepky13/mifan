@@ -179,6 +179,7 @@ st.iframe(
     track_view_html(
         track_geometry, stint, car_look, WEATHERS[weather_name],
         first_straight_m=TRACKS[track_name].segments[0].length_m, environment=TRACKS[track_name].environment,
+        seafront_m=TRACKS[track_name].seafront_m,
     ),
     height=860,
 )

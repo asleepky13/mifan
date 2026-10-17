@@ -47,10 +47,14 @@ class Track:
     width_m: float = 12.0
     environment: str = "parkland"
     """Landscape the renderer draws around the track: one of ``ENVIRONMENTS``."""
+    seafront_m: tuple[float, float] | None = None
+    """Start and end distance (m) of the stretch with the sea on its outside; drawing only."""
 
     def __post_init__(self) -> None:
         if not self.segments:
             raise ValueError("a track needs at least one segment")
+        if self.seafront_m is not None and not 0 <= self.seafront_m[0] < self.seafront_m[1] <= self.total_length_m:
+            raise ValueError(f"seafront_m must be (start, end) within the lap, got {self.seafront_m!r}")
         if self.environment not in ENVIRONMENTS:
             raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {self.environment!r}")
         if not (math.isfinite(self.width_m) and self.width_m > 0):
@@ -134,38 +138,46 @@ MONZA = Track(
 MONACO = Track(
     "Monaco (street circuit)",
     (
-        Segment(601.0, label="Start"),
-        _corner(24.5, 82.3, RIGHT, label="Sainte Devote"),
-        Segment(455.9, label="Beau Rivage"),
-        _corner(81.5, 70.3, LEFT, label="Massenet"),
-        _corner(41, 71.1, RIGHT, label="Casino"),
-        Segment(169.9),
-        _corner(20.5, 113.6, RIGHT, label="Mirabeau"),
-        Segment(88.7),
-        _corner(12.5, 176.8, LEFT, label="Grand Hotel hairpin"),
-        Segment(86.7),
-        _corner(20.5, 94.3, RIGHT, label="Mirabeau Bas"),
-        Segment(90.7),
-        _corner(27, 95.3, RIGHT, label="Portier"),
-        _corner(381.5, 51.2, RIGHT, label="Tunnel"),
-        Segment(201.0),
-        _corner(16.5, 51.1, LEFT, label="Nouvelle chicane"),
-        _corner(16.5, 48.5, RIGHT),
-        Segment(344.1),
-        _corner(47.5, 66.4, LEFT, label="Tabac"),
-        Segment(110.4),
-        _corner(34, 37.2, LEFT, label="Piscine"),
-        _corner(34, 21.8, RIGHT),
-        Segment(76.3),
-        _corner(34, 21.3, RIGHT),
-        _corner(34, 38.1, LEFT),
-        Segment(141.6),
-        _corner(19, 140.2, RIGHT, label="La Rascasse"),
-        Segment(57.2),
-        _corner(27, 60.3, RIGHT, label="Anthony Noghes"),
+        Segment(347.0, label="Start"),
+        _corner(23.5, 73, RIGHT, label="Sainte Devote"),
+        Segment(114.4),
+        _corner(469, 14.9, LEFT, label="Beau Rivage"),
+        Segment(223.9),
+        _corner(64.5, 94.7, LEFT, label="Massenet"),
+        Segment(49.6),
+        _corner(33, 77.8, RIGHT, label="Casino"),
+        Segment(118.4),
+        _corner(141, 7.6, LEFT),
+        Segment(80.4),
+        _corner(19, 118.6, RIGHT, label="Mirabeau"),
+        Segment(73.8),
+        _corner(10.5, 181.8, LEFT, label="Grand Hotel hairpin"),
+        Segment(63.1),
+        _corner(19, 89.3, RIGHT, label="Mirabeau Bas"),
+        Segment(69.5),
+        _corner(26, 105.7, RIGHT, label="Portier"),
+        Segment(64.5),
+        _corner(352, 74.5, RIGHT, label="Tunnel"),
+        Segment(244.4),
+        _corner(17.5, 54.1, LEFT, label="Nouvelle chicane"),
+        _corner(17.5, 55.3, RIGHT),
+        Segment(243.7),
+        _corner(53, 44.3, LEFT, label="Tabac"),
+        Segment(113.8),
+        _corner(41, 36, LEFT, label="Piscine"),
+        _corner(41, 22.5, RIGHT),
+        Segment(75.8),
+        _corner(23.5, 31.6, RIGHT),
+        _corner(23.5, 48.3, LEFT),
+        Segment(121.0),
+        _corner(16.5, 129.1, RIGHT, label="La Rascasse"),
+        Segment(50.2),
+        _corner(21, 64.3, RIGHT, label="Anthony Noghes"),
+        Segment(146.6),
     ),
     width_m=9.0,
     environment="harbour",
+    seafront_m=(1565.0, 3120.0),  # Portier, along the tunnel, chicane, Tabac and the pool, to La Rascasse
 )
 
 SPA = Track(

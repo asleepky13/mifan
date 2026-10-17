@@ -8,7 +8,7 @@
   body { margin: 0; font-family: 'JetBrains Mono', monospace; color: #000; background: #fff; }
   .hud { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); background: #000; color: #fff; }
   /* Fixed height, no wrapping: changing numbers can never resize the HUD and shift the map. */
-  .hud div { height: 74px; padding: .65rem .8rem; border-right: 1px solid #333; overflow: hidden; }
+  .hud > div { height: 74px; padding: .65rem .8rem; border-right: 1px solid #333; overflow: hidden; }
   .hud span { display: block; font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: #BDBDBD; white-space: nowrap; }
   .hud b { display: block; font-family: 'Playfair Display', Georgia, serif; font-size: clamp(.95rem, 2.4vw, 1.6rem); font-weight: 700;
     margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums lining-nums; }
@@ -64,7 +64,7 @@ function path(p, close) {
 const THEME = {
   parkland: { ground: '#3f7a36', stripe: '#47843d', verge: '#2f5f28', tree: '#24451f', crown: '#356b2b' },
   forest: { ground: '#2c5426', stripe: null, verge: '#264a21', tree: '#132e14', crown: '#1f4a22' },
-  harbour: { ground: '#a3a19b', stripe: null, verge: '#8a8882', tree: '#2c5a2a', crown: '#3e7a36', water: '#2b6c99' },
+  harbour: { ground: '#b5b0a6', stripe: null, verge: '#8f8b83', tree: '#2c5a2a', crown: '#3e7a36' },
   desert: { ground: '#dcc28f', stripe: null, verge: '#c9ad78', tree: '#4f6b26', crown: '#7a9a38' },
 }[S.environment] || {};
 const shade = c => { if (!wet || !c) return c; const n = parseInt(c.slice(1), 16), f = 0.85;
@@ -193,25 +193,100 @@ function drawGround() {
     ctx.fillStyle = shade(THEME.stripe);
     for (let x = x0; x < x1; x += 2 * band) ctx.fillRect(x, y0, band, y1 - y0);
   }
-  if (THEME.water) { ctx.fillStyle = shade(THEME.water); ctx.fill(center); }  // harbour inside the loop
+  if (HB) drawSea();
+}
+const hash = n => { const v = Math.sin(n) * 43758.5453; return v - Math.floor(v); };
+// ---- Harbour: sea, quay, piers, yachts, pool, city blocks, tunnel roof (world metres) ----
+const HB = S.scenery.harbour && S.scenery.harbour.sea ? S.scenery.harbour : null;
+const sea = HB && path(HB.sea, true), quay = HB && path(HB.quay, false), tunnel = HB && path(HB.tunnel, false);
+const waves = [];
+if (HB) {
+  const [x0, y0, x1, y1] = S.bounds;
+  for (let i = 0; i < 900; i++) waves.push([x0 + hash(i * 3.17 + 1) * (x1 - x0), y0 + hash(i * 7.91 + 2) * (y1 - y0), 2 + hash(i * 1.3) * 5]);
+}
+function drawSea() {
+  ctx.fillStyle = shade('#1b5a85'); ctx.fill(sea);
+  ctx.save(); ctx.clip(sea);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = shade('#24709e'); ctx.lineWidth = 70; ctx.stroke(quay);   // shallower water near the quay
+  ctx.strokeStyle = shade('#2f82b0'); ctx.lineWidth = 28; ctx.stroke(quay);
+  ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 0.5; ctx.beginPath();
+  for (const [x, y, l] of waves) { ctx.moveTo(x, y); ctx.quadraticCurveTo(x + l / 2, y + 0.8, x + l, y); }
+  ctx.stroke();
+  ctx.restore();
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = '#ece5d6'; ctx.lineWidth = 2.2; ctx.stroke(quay);          // stone quay edge
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 0.5; ctx.stroke(quay);
 }
 function drawHarbour() {
-  const B = S.scenery.blocks, Y = S.scenery.yachts, roofs = ['#c9b79c', '#d8cfc0', '#b8735a', '#e6e1d6'];
-  for (let i = 0; i < (B.x || []).length; i++) {
-    ctx.save(); ctx.translate(B.x[i], B.y[i]); ctx.rotate(B.a[i]);
-    rect(-B.w[i] / 2, -B.h[i] / 2, B.w[i], B.h[i], shade(roofs[i % roofs.length]));
-    ctx.lineWidth = 0.5; ctx.strokeStyle = '#6b6862'; ctx.strokeRect(-B.w[i] / 2, -B.h[i] / 2, B.w[i], B.h[i]);
-    ctx.restore();
+  if (!HB) return;
+  const bw = path(HB.breakwater, false), n = HB.breakwater.x.length - 1;
+  ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 14; ctx.stroke(bw);  // surf on the rocks
+  ctx.strokeStyle = '#8c8577'; ctx.lineWidth = 9; ctx.stroke(bw);
+  ctx.strokeStyle = '#c9c1b0'; ctx.lineWidth = 5; ctx.stroke(bw);
+  ctx.beginPath(); ctx.arc(HB.breakwater.x[n], HB.breakwater.y[n], 3.2, 0, 2 * Math.PI); ctx.fillStyle = '#c8102e'; ctx.fill();  // harbour light
+  ctx.lineCap = 'butt';
+  for (const pr of HB.piers) {
+    const p = path(pr, false);
+    ctx.lineCap = 'butt'; ctx.strokeStyle = '#6d5f49'; ctx.lineWidth = 3.6; ctx.stroke(p);
+    ctx.strokeStyle = '#cdb994'; ctx.lineWidth = 2.6; ctx.stroke(p);
   }
-  for (let i = 0; i < (Y.x || []).length; i++) {
-    const l = Y.l[i], w = l * 0.28;
+  const Y = HB.yachts;
+  for (let i = 0; i < Y.x.length; i++) {
+    const l = Y.l[i], w = l * 0.3;
     ctx.save(); ctx.translate(Y.x[i], Y.y[i]); ctx.rotate(Y.a[i]);
-    ctx.beginPath(); ctx.moveTo(l / 2, 0); ctx.quadraticCurveTo(l / 4, w / 2, -l / 2, w / 2); ctx.lineTo(-l / 2, -w / 2);
-    ctx.quadraticCurveTo(l / 4, -w / 2, l / 2, 0); ctx.fillStyle = '#f4f4f2'; ctx.fill();
-    ctx.lineWidth = 0.4; ctx.strokeStyle = '#7a8a96'; ctx.stroke();
-    rect(-l / 4, -w / 4, l / 3, w / 2, '#cfd6db');  // cabin
+    const hull = new Path2D();
+    hull.moveTo(l / 2, 0); hull.bezierCurveTo(l / 4, w / 2, -l / 4, w / 2, -l / 2, w * 0.42);
+    hull.lineTo(-l / 2, -w * 0.42); hull.bezierCurveTo(-l / 4, -w / 2, l / 4, -w / 2, l / 2, 0); hull.closePath();
+    ctx.save(); ctx.translate(0.8, -0.8); ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fill(hull); ctx.restore();   // shadow on the water
+    ctx.fillStyle = '#fbfbf8'; ctx.fill(hull); ctx.strokeStyle = '#8796a2'; ctx.lineWidth = 0.25; ctx.stroke(hull);
+    rect(-l / 2 + 0.6, -w * 0.3, l * 0.22, w * 0.6, '#b98d5c');                 // teak aft deck
+    rect(-l * 0.22, -w * 0.28, l * 0.42, w * 0.56, '#e6eaee');                  // superstructure
+    rect(l * 0.12, -w * 0.24, l * 0.06, w * 0.48, '#2d3e4c');                   // windscreen
+    if (l > 30) rect(-l * 0.12, -w * 0.18, l * 0.2, w * 0.36, '#d3d9de');       // upper deck
     ctx.restore();
   }
+  // Swimming pool on the quay.
+  const P = path(HB.pool, true);
+  ctx.fillStyle = '#e9e4d8'; ctx.fill(P);
+  ctx.save(); ctx.clip(P);
+  ctx.strokeStyle = '#4cc3ea'; ctx.lineWidth = 18; ctx.lineJoin = 'miter'; ctx.stroke(P);
+  ctx.restore();
+  ctx.fillStyle = '#3fb7e3';
+  ctx.beginPath(); const px = HB.pool.x, py = HB.pool.y, inset = 0.18;
+  const lerp = (a, b, t) => a + (b - a) * t, cx = (px[0] + px[1] + px[2] + px[3]) / 4, cy = (py[0] + py[1] + py[2] + py[3]) / 4;
+  for (let i = 0; i < 4; i++) { const x = lerp(px[i], cx, inset * 2), y = lerp(py[i], cy, inset * 2); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 0.3; ctx.beginPath();
+  for (let k = 1; k < 6; k++) {
+    const t = k / 6, ax = lerp(lerp(px[0], cx, .36), lerp(px[3], cx, .36), t), ay = lerp(lerp(py[0], cy, .36), lerp(py[3], cy, .36), t);
+    const bx = lerp(lerp(px[1], cx, .36), lerp(px[2], cx, .36), t), by = lerp(lerp(py[1], cy, .36), lerp(py[2], cy, .36), t);
+    ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  }
+  ctx.stroke();
+  // City blocks, squared to the street, with a drop shadow.
+  const B = HB.blocks, roofs = ['#d9cdb8', '#c98f6b', '#ece7dd', '#b9b2a6', '#d7b48c', '#f1ede4'];
+  for (let i = 0; i < B.x.length; i++) {
+    ctx.save(); ctx.translate(B.x[i], B.y[i]); ctx.rotate(B.a[i]);
+    const w = B.w[i], h = B.h[i];
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(-w / 2 + 2, -h / 2 - 2, w, h);
+    ctx.fillStyle = shade(roofs[i % roofs.length]); ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.strokeStyle = 'rgba(60,50,40,.55)'; ctx.lineWidth = 0.5; ctx.strokeRect(-w / 2, -h / 2, w, h);
+    if (i % 3 === 0) { ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(w / 2, 0); ctx.stroke(); }  // roof ridge
+    if (i % 5 === 1) rect(-w * 0.15, -h * 0.15, w * 0.3, h * 0.3, 'rgba(255,255,255,.35)');                                       // rooftop plant room
+    ctx.restore();
+  }
+}
+function drawTunnelRoof() {
+  if (!HB) return;
+  ctx.save();
+  if ($('view').value === 'follow') ctx.globalAlpha = 0.35;  // see the car through the roof when following it
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = T.width + 26; ctx.stroke(tunnel);
+  ctx.strokeStyle = shade('#d6cebf'); ctx.lineWidth = T.width + 22; ctx.stroke(tunnel);   // the hotel built over the tunnel
+  ctx.strokeStyle = shade('#c4bbaa'); ctx.lineWidth = T.width + 8; ctx.stroke(tunnel);
+  ctx.setLineDash([3, 5]); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = T.width + 2; ctx.stroke(tunnel); ctx.setLineDash([]);
+  ctx.restore();
 }
 function drawBuildings() {
   for (const b of S.scenery.buildings) {
@@ -260,11 +335,11 @@ function draw(s, running) {
   ctx.restore();
   ctx.fillStyle = shade(THEME.tree); ctx.fill(trees); ctx.fillStyle = shade(THEME.crown); ctx.fill(crowns);
   drawCar(s, scale, running);
+  drawTunnelRoof();
   drawRain();
 }
 
 // Rain overlay in screen space; drops move with wall-clock time, independent of the car.
-const hash = n => { const v = Math.sin(n) * 43758.5453; return v - Math.floor(v); };
 const drops = Array.from({ length: Math.round(260 * wet) }, (_, i) => [hash(i * 12.9898) * W, hash(i * 78.233) * H]);
 function drawRain() {
   if (!drops.length) return;
