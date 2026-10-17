@@ -21,6 +21,12 @@ A browser tab opens at http://localhost:8501. The sidebar holds the circuit and 
 
 **Circuits and weather.** The sidebar picks Monza, Monaco or Spa and a weather preset. Weather scales track grip, so cornering speeds and braking distances drop in the wet; the track view darkens the asphalt and draws rain. The grip factors are illustrative, not calibrated.
 
+**Telemetry.** Stacked charts by distance: vehicle speed, throttle, brake, steering and delta time against the baseline (default setup), each comparing the current setup (blue) with the baseline (orange). A crosshair follows the pointer across every chart and the speed-coloured track map, with both laps' values at the cursor; the arrow keys move it too. A lap summary table lists the headline numbers for both laps. How the channels are derived:
+- Throttle is the drive force the lap needs (mass × acceleration + drag) as a share of what the engine and tyres can deliver at that speed.
+- Brake is the braking force needed as a share of the braking limit.
+- Steering is the kinematic road-wheel angle, `atan(wheelbase × curvature)`, so it steps at corner entry.
+- There is no gear chart: the engine has no gearbox.
+
 **Garage.** Pick a body (Standard Kart, Comet Coupe, Bulldog Truck, Feather Frame), wheels (Standard, Slicks, Monster, Rollers) and an engine (Standard, Turbo, Electric, Lightweight). Each part's effect is listed under its picker. Parts feed the engine, so lap time, top speed, cornering and the car's motion on track all change; the track view draws the chosen parts. Reset to default also resets the parts.
 
 **On track (V2).** A top-down view of the circuit with asphalt, curbs and the chequered start/finish line. Around it: gravel traps outside slow corners, tarmac run-off outside fast ones, tyre walls, guardrails, trees, a grandstand and pit garages, all placed from the track geometry. The car moves at the simulated speed. The view has Start, Pause and Reset controls, a sim-speed selector (0.25×–8×), an Overview or Follow-car camera, and a readout of speed, lap, lap time, last lap and status. The body colour comes from the sidebar picker.
@@ -71,6 +77,8 @@ for name, s in sensitivity_analysis(car, TECHNICAL_CIRCUIT).items():
 | `racelab/playback.py` | `LapPlayback.from_lap(lap, geometry)`; `state_at(t)` → `VehicleState` (lap, lap time, distance, x, y, heading, speed). |
 | `racelab/config.py` | Future-facing configuration: `TireCompound`, `AeroPackage`, `BodyPackage`, `VehicleConfig.to_car()`. Fields listed in `NOT_MODELED` (tire temperature and wear, downforce) are stored but have **no effect** yet. |
 | `racelab/parts.py` | Kart-style `PARTS` in three categories (body, wheels, engine). `apply_parts(car, parts)` adds mass and scales power, drag, frontal area, grip, braking and traction, so each part changes the simulated lap. The values are game-style balance, not measured data. |
+| `racelab/telemetry.py` | `build_telemetry(lap, car, track, geometry)` → `Telemetry`: speed, throttle %, brake %, kinematic steering angle, time and position per sample, derived from the lap; `lap_summary` → lap time, speeds, full-throttle and braking share, max steering. |
+| `ui/telemetry_view.py`, `ui/telemetry.html` | The telemetry dashboard. Rendering only, no physics. |
 | `ui/track_view.py`, `ui/track_view.html` | Renders the canvas view. Rendering only, no physics. |
 | `racelab/physics.py` | Drag, drive force, net acceleration, braking, cornering speed and a top-speed bound. |
 | `racelab/simulation.py` | `simulate_lap` → `LapResult`. |

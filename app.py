@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import altair as alt
-import pandas as pd
 import streamlit as st
 
 from racelab import CIRCUITS, WEATHER, simulate_lap
@@ -11,6 +9,7 @@ from racelab.config import BodyPackage
 from racelab.geometry import build_geometry
 from racelab.parts import CATEGORIES, DEFAULT_PARTS, PARTS_BY_CATEGORY, apply_parts
 from racelab.playback import LapPlayback
+from racelab.telemetry import build_telemetry
 from racelab.summary import (
     DRIVETRAIN_EFFICIENCY,
     MAX_TRACTIVE_FORCE_N,
@@ -18,6 +17,7 @@ from racelab.summary import (
     corner_average_speed_mps,
     time_to_speed,
 )
+from ui.telemetry_view import telemetry_html
 from ui.track_view import track_view_html
 
 # key: (label, unit, min, max, default, step, format)
@@ -83,7 +83,7 @@ h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; l
 def run(setup: tuple[tuple[str, float], ...], parts: tuple[str, ...], track_name: str, weather_name: str):
     car = apply_parts(car_from_setup(**dict(setup)), [PARTS_BY_CATEGORY[c][k] for c, k in zip(CATEGORIES, parts)])
     lap = simulate_lap(car, TRACKS[track_name].in_weather(WEATHERS[weather_name]), step_m=2.0)
-    return lap, time_to_speed(car), corner_average_speed_mps(lap)
+    return car, lap, time_to_speed(car), corner_average_speed_mps(lap)
 
 
 @st.cache_data(show_spinner=False)
@@ -136,8 +136,8 @@ with st.sidebar:
 setup = {key: st.session_state[key] for key in SLIDERS}
 parts = tuple(st.session_state[f"part_{c}"] for c in CATEGORIES)
 try:
-    lap, zero_to_100, corner = run(tuple(setup.items()), parts, track_name, weather_name)
-    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), tuple(DEFAULT_PARTS.values()), track_name, weather_name)
+    car, lap, zero_to_100, corner = run(tuple(setup.items()), parts, track_name, weather_name)
+    base_car, base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), tuple(DEFAULT_PARTS.values()), track_name, weather_name)
 except (ValueError, ArithmeticError) as exc:
     notice(f"<strong>Simulation failed for this setup.</strong> {exc}")
     st.stop()
@@ -182,34 +182,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<h2 class="rl-h2">Speed over the lap</h2>', unsafe_allow_html=True)
-profiles = pd.concat(
-    pd.DataFrame({"Distance (m)": r.distance_m, "Speed (km/h)": r.speed_mps * KMH, "Setup": name})
-    for name, r in (("Current", lap), ("Baseline (default)", base_lap))
+st.markdown('<h2 class="rl-h2">Telemetry</h2>', unsafe_allow_html=True)
+track_in_weather = TRACKS[track_name].in_weather(WEATHERS[weather_name])
+st.iframe(
+    telemetry_html(
+        build_telemetry(lap, car, track_in_weather, track_geometry),
+        build_telemetry(base_lap, base_car, track_in_weather, track_geometry),
+    ),
+    height="content",
 )
-series = alt.Scale(domain=["Current", "Baseline (default)"], range=["#000000", "#525252"])
-legend = alt.Legend(
-    orient="top", title=None, labelFont="JetBrains Mono", symbolType="stroke", symbolSize=600, symbolStrokeWidth=2, columnPadding=24
+st.markdown(
+    "<p class='rl-note'>Throttle and brake are the drive and braking force the simulated lap needs, as a share of what "
+    "the car can deliver at that speed and grip. Steering is the kinematic road-wheel angle for the track curvature "
+    "(2.6 m wheelbase). There is no gear channel: the engine has no gearbox. Delta below zero means the current setup is ahead.</p>",
+    unsafe_allow_html=True,
 )
-chart = (
-    alt.Chart(profiles)
-    .mark_line(strokeWidth=1.75)
-    .encode(
-        x=alt.X("Distance (m):Q", scale=alt.Scale(nice=False), axis=alt.Axis(tickCount=8, format=",.0f")),
-        y=alt.Y("Speed (km/h):Q"),
-        color=alt.Color("Setup:N", scale=series, legend=legend),
-        strokeDash=alt.StrokeDash(
-            "Setup:N", scale=alt.Scale(domain=series.domain, range=[[1, 0], [6, 4]]), legend=legend
-        ),
-    )
-    .properties(height=360)
-    .configure_axis(
-        gridColor="#E5E5E5", domainColor="#000", tickColor="#000", labelColor="#000", titleColor="#000",
-        labelFont="JetBrains Mono", titleFont="JetBrains Mono", titleFontWeight="normal",
-    )
-    .configure_view(stroke="#000")
-)
-st.altair_chart(chart, theme=None, width="stretch")
 
 st.markdown('<h2 class="rl-h2">Setup</h2>', unsafe_allow_html=True)
 rows = "".join(

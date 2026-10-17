@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --surface: #ffffff; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --current: #2a78d6; --baseline: #eb6834;
+  }
+  * { box-sizing: border-box; border-radius: 0; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font-family: 'JetBrains Mono', monospace; }
+  /* Charts get the full width; map + summary sit beside them only when there is room. */
+  .tm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .side { display: grid; gap: 16px; align-content: start; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (min-width: 1100px) { .tm { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); } .side { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) { .side { grid-template-columns: minmax(0, 1fr); } }
+  .card { border: 1px solid var(--ink); background: var(--surface); }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px; border-bottom: 1px solid var(--ink); }
+  .card-title { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; }
+  .legend { display: flex; gap: 16px; font-size: .72rem; color: var(--ink-2); }
+  .key { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+  .cursor { font-size: .72rem; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 22ch; text-align: right; }
+  .panel { border-bottom: 1px solid var(--grid); }
+  .panel:last-child { border-bottom: 0; }
+  .panel-head { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 14px 0 48px; height: 24px; }
+  .panel-title { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; }
+  .readout { display: flex; gap: 14px; font-size: .78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .readout b { font-weight: 600; color: var(--ink); }
+  .readout span { color: var(--muted); }
+  svg { display: block; width: 100%; overflow: visible; }
+  .plots { outline: none; touch-action: pan-y; }
+  .plots:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .tick { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .axis-title { font-size: 10px; fill: var(--ink-2); letter-spacing: .08em; text-transform: uppercase; }
+  .scale { display: flex; align-items: center; gap: 8px; padding: 8px 14px 12px; font-size: .68rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .scale .ramp { display: flex; gap: 2px; }
+  .scale .ramp i { display: block; width: 26px; height: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: .78rem; font-variant-numeric: tabular-nums; }
+  th { text-align: right; font-weight: 400; font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2);
+    padding: 8px 10px 6px; border-bottom: 2px solid var(--ink); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  td:first-child { color: var(--ink-2); white-space: normal; }
+  th:first-child, td:first-child { padding-left: 14px; }
+  tr:last-child td { border-bottom: 0; }
+</style>
+</head>
+<body>
+<div class="tm">
+  <section class="card" aria-label="Telemetry by distance">
+    <div class="card-head">
+      <div class="card-title">Telemetry · by distance</div>
+      <div class="legend">
+        <span><i class="key" style="border-color: var(--current)"></i>Current</span>
+        <span><i class="key" style="border-color: var(--baseline)"></i>Baseline (default setup)</span>
+      </div>
+      <div class="cursor" id="cursor">Hover or use ← → to inspect</div>
+    </div>
+    <div class="plots" id="plots" tabindex="0" role="application"
+         aria-label="Telemetry charts. Use left and right arrow keys to move the cursor along the lap."></div>
+  </section>
+  <div class="side">
+    <section class="card" aria-label="Track map coloured by speed">
+      <div class="card-head"><div class="card-title">Track map · current lap speed</div></div>
+      <svg id="map" viewBox="0 0 400 290" role="img" aria-label="Track map coloured by speed"></svg>
+      <div class="scale"><span id="smin"></span><span class="ramp" id="ramp"></span><span id="smax"></span><span>km/h</span></div>
+    </section>
+    <section class="card" aria-label="Lap summary table">
+      <div class="card-head"><div class="card-title">Lap summary</div></div>
+      <table id="summary"></table>
+    </section>
+  </div>
+</div>
+<script>
+const D = __TELEMETRY__;
+const N = D.distance.length, SVGNS = 'http://www.w3.org/2000/svg';
+const css = getComputedStyle(document.documentElement), color = k => css.getPropertyValue(k).trim();
+const RAMP = ['#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'];  // validated ordinal blue ramp
+const PANELS = [
+  { key: 'speed', title: 'Vehicle speed', unit: 'km/h', h: 150, digits: 0, ticks: 4 },
+  { key: 'throttle', title: 'Throttle', unit: '%', h: 84, digits: 0, domain: [0, 100] },
+  { key: 'brake', title: 'Brake', unit: '%', h: 84, digits: 0, domain: [0, 100] },
+  { key: 'steer', title: 'Steering (kinematic)', unit: '°', h: 84, digits: 1, symmetric: true },
+  { key: 'delta', title: 'Delta time vs baseline', unit: 's', h: 100, digits: 2, single: true, zero: true },
+];
+const ML = 48, MR = 14, MT = 6, MB = 8, XAXIS = 30;
+const el = (tag, attrs = {}, parent) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+};
+const nice = (lo, hi, count = 3) => {
+  const step0 = (hi - lo) / (count - 1 || 1), mag = 10 ** Math.floor(Math.log10(step0 || 1));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || step0;
+  const start = Math.floor(lo / step) * step, out = [];
+  for (let v = start; v <= hi + step * 0.5; v += step) out.push(+v.toFixed(6));
+  return out;
+};
+const values = (p, who) => p.single ? D.delta : D.series[who][p.key];
+
+let cursor = null;
+const plots = document.getElementById('plots');
+let cross = [], readouts = [], xOf = null;
+
+function render() {
+  plots.textContent = '';
+  cross = []; readouts = [];
+  const W = plots.clientWidth, x0 = ML, x1 = W - MR;
+  xOf = d => x0 + (d / D.length) * (x1 - x0);
+  PANELS.forEach((p, i) => {
+    const last = i === PANELS.length - 1;
+    const div = document.createElement('div'); div.className = 'panel';
+    const head = document.createElement('div'); head.className = 'panel-head';
+    const title = document.createElement('div'); title.className = 'panel-title'; title.textContent = `${p.title} (${p.unit})`;
+    const read = document.createElement('div'); read.className = 'readout';
+    head.append(title, read); div.append(head); plots.append(div);
+    readouts.push(read);
+
+    const all = p.single ? D.delta : [...D.series.current[p.key], ...D.series.baseline[p.key]];
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if (p.domain) [lo, hi] = p.domain;
+    if (p.symmetric) { const m = Math.max(Math.abs(lo), Math.abs(hi), 1); lo = -m; hi = m; }
+    if (p.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const ticks = nice(lo, hi, p.ticks || 3); lo = Math.min(lo, ticks[0]); hi = Math.max(hi, ticks[ticks.length - 1]);
+    const H = p.h + (last ? XAXIS : 0), y0 = MT, y1 = p.h - MB;
+    const yOf = v => y1 - ((v - lo) / (hi - lo)) * (y1 - y0);
+    const svg = el('svg', { height: H, viewBox: `0 0 ${W} ${H}` }, div);
+
+    for (const t of ticks) {  // recessive solid hairline grid
+      el('line', { x1: x0, x2: x1, y1: yOf(t), y2: yOf(t), stroke: (t === 0 && (p.zero || p.symmetric)) ? color('--axis') : color('--grid'), 'stroke-width': 1 }, svg);
+      el('text', { x: x0 - 8, y: yOf(t) + 3, 'text-anchor': 'end', class: 'tick' }, svg).textContent = +t.toFixed(2);
+    }
+    const line = (vals, stroke, width) => {
+      let d = '';
+      for (let k = 0; k < N; k++) d += (k ? 'L' : 'M') + xOf(D.distance[k]).toFixed(1) + ' ' + yOf(vals[k]).toFixed(1);
+      return el('path', { d, fill: 'none', stroke, 'stroke-width': width, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    };
+    if (p.single) {
+      let area = `M${xOf(0)} ${yOf(0)}`;
+      for (let k = 0; k < N; k++) area += `L${xOf(D.distance[k]).toFixed(1)} ${yOf(D.delta[k]).toFixed(1)}`;
+      el('path', { d: area + `L${xOf(D.distance[N - 1])} ${yOf(0)}Z`, fill: color('--current'), 'fill-opacity': 0.1 }, svg);
+      line(D.delta, color('--current'), 2);
+    } else {
+      line(D.series.baseline[p.key], color('--baseline'), 1.5);
+      line(D.series.current[p.key], color('--current'), 2);
+    }
+    if (last) {
+      for (const t of nice(0, D.length, 6).filter(t => t <= D.length)) {
+        el('line', { x1: xOf(t), x2: xOf(t), y1: y1, y2: y1 + 4, stroke: color('--axis') }, svg);
+        el('text', { x: xOf(t), y: y1 + 16, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t >= 1000 ? (t / 1000) + 'k' : t;
+      }
+      el('text', { x: x1, y: y1 + 28, 'text-anchor': 'end', class: 'axis-title' }, svg).textContent = 'Distance (m)';
+    }
+    cross.push(el('line', { y1: y0, y2: y1, stroke: color('--ink'), 'stroke-width': 1, visibility: 'hidden' }, svg));
+    // Hit target: the whole plot band, not the 2px line.
+    const hit = el('rect', { x: x0, y: 0, width: Math.max(0, x1 - x0), height: H, fill: 'transparent' }, svg);
+    hit.addEventListener('pointermove', e => {
+      const r = svg.getBoundingClientRect();
+      setCursor(nearest(((e.clientX - r.left) / r.width * W - x0) / (x1 - x0) * D.length));
+    });
+  });
+  setCursor(cursor);
+}
+const nearest = d => Math.max(0, Math.min(N - 1, Math.round(d / (D.distance[1] - D.distance[0]))));
+
+function setCursor(i) {
+  cursor = i;
+  const show = i !== null;
+  cross.forEach(c => { c.setAttribute('visibility', show ? 'visible' : 'hidden'); if (show) { c.setAttribute('x1', xOf(D.distance[i])); c.setAttribute('x2', xOf(D.distance[i])); } });
+  PANELS.forEach((p, k) => {
+    const r = readouts[k]; r.textContent = '';
+    if (!show) return;
+    const rows = p.single ? [['Δ', D.delta[i], '--current']] : [['Current', D.series.current[p.key][i], '--current'], ['Baseline', D.series.baseline[p.key][i], '--baseline']];
+    for (const [label, v, c] of rows) {
+      const s = document.createElement('span');
+      const key = document.createElement('i'); key.className = 'key'; key.style.borderColor = color(c);
+      const b = document.createElement('b'); b.textContent = (p.single && v > 0 ? '+' : '') + v.toFixed(p.digits);
+      s.append(key, b, document.createTextNode(' ' + label));
+      r.append(s);
+    }
+  });
+  document.getElementById('cursor').textContent = show
+    ? `${Math.round(D.distance[i]).toLocaleString()} m · ${D.time.current[i].toFixed(2)} s`
+    : 'Hover or use ← → to inspect';
+  marker.setAttribute('visibility', show ? 'visible' : 'hidden');
+  if (show) { marker.setAttribute('cx', mx[i]); marker.setAttribute('cy', my[i]); }
+}
+
+plots.addEventListener('keydown', e => {
+  const step = Math.max(1, Math.round(N / 100)) * (e.shiftKey ? 5 : 1);
+  const moves = { ArrowRight: step, ArrowLeft: -step, Home: -N, End: N };
+  if (!(e.key in moves)) return;
+  e.preventDefault();
+  setCursor(Math.max(0, Math.min(N - 1, (cursor ?? 0) + moves[e.key])));
+});
+
+// ---- Track map, binned by speed (5 classes of the ordinal blue ramp) ----
+const map = document.getElementById('map');
+const xs = D.map.x, ys = D.map.y, PAD = 16, VW = 400, VH = 290;
+const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+const k = Math.min((VW - 2 * PAD) / (maxX - minX), (VH - 2 * PAD) / (maxY - minY));
+const offX = (VW - k * (maxX - minX)) / 2, offY = (VH - k * (maxY - minY)) / 2;
+const mx = xs.map(x => offX + (x - minX) * k), my = ys.map(y => offY + (maxY - y) * k);
+const sp = D.series.current.speed, smin = Math.min(...sp), smax = Math.max(...sp);
+const bin = v => Math.min(RAMP.length - 1, Math.floor((v - smin) / (smax - smin + 1e-9) * RAMP.length));
+let outline = `M${mx[0]} ${my[0]}`; for (let i = 1; i < N; i++) outline += `L${mx[i].toFixed(1)} ${my[i].toFixed(1)}`;
+el('path', { d: outline + 'Z', fill: 'none', stroke: color('--grid'), 'stroke-width': 9, 'stroke-linejoin': 'round' }, map);
+for (let i = 0; i < N; ) {  // one path per run of equal speed class
+  const b = bin(sp[i]); let d = `M${mx[i].toFixed(1)} ${my[i].toFixed(1)}`, j = i;
+  while (j < N && bin(sp[j]) === b) { j++; const t = j % N; d += `L${mx[t].toFixed(1)} ${my[t].toFixed(1)}`; }
+  el('path', { d, fill: 'none', stroke: RAMP[b], 'stroke-width': 4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, map);
+  i = j;
+}
+const sx = mx[1] - mx[0], sy = my[1] - my[0], sl = Math.hypot(sx, sy) || 1;  // start/finish tick across the track
+el('line', { x1: mx[0] - sy / sl * 9, y1: my[0] + sx / sl * 9, x2: mx[0] + sy / sl * 9, y2: my[0] - sx / sl * 9, stroke: color('--ink'), 'stroke-width': 2 }, map);
+const marker = el('circle', { r: 5, fill: color('--ink'), stroke: color('--surface'), 'stroke-width': 2, visibility: 'hidden' }, map);
+map.addEventListener('pointermove', e => {
+  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(map.getScreenCTM().inverse());
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < N; i++) { const dd = (mx[i] - pt.x) ** 2 + (my[i] - pt.y) ** 2; if (dd < bd) { bd = dd; best = i; } }
+  if (bd < 30 ** 2) setCursor(best);  // nearest-point hit area, generous radius
+});
+document.getElementById('smin').textContent = Math.round(smin);
+document.getElementById('smax').textContent = Math.round(smax);
+for (const c of RAMP) { const i = document.createElement('i'); i.style.background = c; document.getElementById('ramp').append(i); }
+
+// ---- Lap summary (also the table view of the charts' headline values) ----
+const S = D.summary, rowsSpec = [
+  ['Lap time', 'lap_time_s', 's', 2], ['Top speed', 'top_speed_kmh', 'km/h', 0], ['Min speed', 'min_speed_kmh', 'km/h', 0],
+  ['Avg speed', 'avg_speed_kmh', 'km/h', 1], ['Full throttle', 'full_throttle_pct', '% of lap', 1],
+  ['Braking', 'braking_pct', '% of lap', 1], ['Max steering', 'max_steering_deg', '°', 1],
+];
+const table = document.getElementById('summary');
+const headRow = table.insertRow();
+for (const [text, c] of [['Metric'], ['Current', '--current'], ['Baseline', '--baseline'], ['Δ']]) {
+  const th = document.createElement('th');
+  if (c) { const key = document.createElement('i'); key.className = 'key'; key.style.borderColor = color(c); th.append(key); }
+  th.append(document.createTextNode(text)); headRow.append(th);
+}
+for (const [label, key, unit, digits] of rowsSpec) {
+  const tr = table.insertRow(), cur = S.current[key], base = S.baseline[key], diff = cur - base;
+  for (const text of [`${label} (${unit})`, cur.toFixed(digits), base.toFixed(digits), (diff > 0 ? '+' : '') + diff.toFixed(digits)])
+    tr.insertCell().textContent = text;
+}
+
+let lastW = plots.clientWidth;  // re-render on width changes only; height changes come from render itself
+new ResizeObserver(() => { if (plots.clientWidth !== lastW) { lastW = plots.clientWidth; render(); } }).observe(plots);
+render();
+</script>
+</body>
+</html>
