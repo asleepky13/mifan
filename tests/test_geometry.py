@@ -10,7 +10,7 @@ from racelab.playback import LapPlayback
 from racelab.simulation import simulate_lap
 from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
 from tests import sports_car
-from ui.track_view import scene, track_view_html
+from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, scene, track_view_html
 
 TRACKS = CIRCUITS
 
@@ -158,17 +158,38 @@ class SceneTest(unittest.TestCase):
         track = TECHNICAL_CIRCUIT
         geometry = build_geometry(track)
         pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-        data = scene(geometry, pb, BodyPackage(color_hex="#123456"), WEATHER[-1])
+        data = scene(geometry, pb, {"body": "bulldog", "color": "#123456"}, WEATHER[-1])
         self.assertEqual(data["weather"], {"name": "Heavy rain", "rain": 1.0})
         kinds = [s.is_straight for s in track.segments]
         corner_runs = sum(not k and (i == 0 or kinds[i - 1]) for i, k in enumerate(kinds))  # back-to-back corners share a curb
         self.assertEqual(len(data["track"]["curbs"]), 2 * corner_runs)
         self.assertEqual(len(data["frames"]["t"]), len(pb.time_s))
-        self.assertEqual(data["body"]["color"], "#123456")
-        html = track_view_html(geometry, pb, BodyPackage())
+        self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "color": "#123456"})
+        html = track_view_html(geometry, pb)
         self.assertNotIn("__SCENE__", html)
         payload = html.split("const S = ", 1)[1].split(";\n", 1)[0]
         self.assertEqual(json.loads(payload)["track"]["name"], track.name)
+
+
+    def test_scenery_stays_off_the_track(self):
+        for track in CIRCUITS:
+            geometry = build_geometry(track)
+            pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
+            data = scene(geometry, pb, first_straight_m=track.segments[0].length_m)
+            trees = data["scenery"]["trees"]
+            with self.subTest(track=track.name):
+                self.assertGreater(len(trees["x"]), 50)
+                d = distance_to_track(geometry, np.array(trees["x"]), np.array(trees["y"]))
+                self.assertTrue(np.all(d > geometry.width_m / 2 + CURB_WIDTH_M + RUNOFF_WIDTH_M + TREE_CLEARANCE_M - 0.01))
+                self.assertTrue(data["track"]["armco"])
+                self.assertIn("grandstand", [b["kind"] for b in data["scenery"]["buildings"]])
+                for b in data["scenery"]["buildings"]:
+                    self.assertTrue(np.all(distance_to_track(geometry, np.array(b["x"]), np.array(b["y"])) > geometry.width_m / 2))
+                runoff = data["track"]["runoff"]
+                self.assertTrue(any(r["gravel"] for r in runoff))
+                # Monza's Curva Grande (r ~350 m) is fast, so not every corner gets gravel.
+                if track.name.startswith("Monza"):
+                    self.assertFalse(all(r["gravel"] for r in runoff))
 
 
 if __name__ == "__main__":
