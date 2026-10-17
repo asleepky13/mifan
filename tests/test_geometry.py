@@ -168,7 +168,8 @@ class SceneTest(unittest.TestCase):
         self.assertEqual(data["laps"][0]["v"][0], 0.0)    # standing start on new tyres
         self.assertEqual(data["laps"][-1]["v"][-1], 0.0)  # stops at the line for the change
         self.assertEqual(data["change_s"], stint.change_s)
-        self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "color": "#123456"})
+        self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "color": "#123456",
+                                       "tyre": "Medium", "tyre_color": "#FFD100"})
         html = track_view_html(geometry, stint)
         self.assertNotIn("__SCENE__", html)
         payload = html.split("const S = ", 1)[1].split(";\n", 1)[0]

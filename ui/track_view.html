@@ -32,7 +32,7 @@
   <div><span>Lap</span><b id="lap">1</b></div>
   <div><span>Lap time</span><b id="laptime">0.00</b></div>
   <div><span>Last lap</span><b id="last">—</b></div>
-  <div><span>Tyres</span><b id="tyres">100%</b><div class="tyre"><i id="tyrebar" style="width:100%"></i></div></div>
+  <div><span id="tyrename">Tyres</span><b id="tyres">100%</b><div class="tyre"><i id="tyrebar" style="width:100%"></i></div></div>
   <div><span>Status</span><b id="status">Ready</b></div>
   <div><span>Weather</span><b id="weather">—</b></div>
 </div>
@@ -118,8 +118,8 @@ function drawWheels(L, B) {
   for (const x of [L * 0.32, -L * 0.3]) for (const side of [-1, 1]) {
     const cx = x - wheel.l / 2, cy = side * y - wheel.w / 2;
     rect(cx, cy, wheel.l, wheel.w, '#111');
+    rect(cx, side > 0 ? cy + wheel.w - 0.06 : cy, wheel.l, 0.06, S.car.tyre_color);  // sidewall colour of the tyre fitted
     if (S.car.wheels === 'monster') for (let k = 1; k < 6; k++) rect(cx + k * wheel.l / 6 - 0.03, cy, 0.06, wheel.w, '#3a3a3a');
-    if (S.car.wheels === 'slick') rect(cx, side > 0 ? cy + wheel.w - 0.07 : cy, wheel.l, 0.07, '#f2c200');
     if (S.car.wheels === 'standard') rect(x - 0.12, side * y - 0.08, 0.24, 0.16, '#9a9a9a');
     if (S.car.wheels === 'roller') { ctx.beginPath(); ctx.arc(x, side * y, 0.1, 0, 2 * Math.PI); ctx.fillStyle = '#fff'; ctx.fill(); }
   }
@@ -361,7 +361,8 @@ function hud(s, status) {
   $('last').textContent = s.last === null ? '—' : s.last.toFixed(2) + ' s';
   $('tyres').textContent = Math.round(s.tyres * 100) + '%';
   $('tyrebar').style.width = (s.tyres * 100).toFixed(1) + '%';
-  $('tyrebar').className = s.tyres <= 0.3 ? 'low' : '';
+  $('tyrename').textContent = S.car.tyre;
+  $('tyrebar').style.background = s.tyres <= 0.3 ? '#ff5a36' : S.car.tyre_color;
   $('status').textContent = s.change !== null && running ? `Tyre change ${Math.max(0, S.change_s - s.change).toFixed(1)} s` : status;
   $('weather').textContent = S.weather.name;
 }

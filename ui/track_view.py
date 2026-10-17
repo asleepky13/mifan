@@ -10,7 +10,7 @@ import numpy as np
 
 from racelab.geometry import Camera, TrackGeometry
 from racelab.playback import LapPlayback
-from racelab.tires import TyreStint
+from racelab.tires import MEDIUM, TyreStint
 from racelab.track import ENVIRONMENTS, WEATHER, Weather
 
 VIEW_W, VIEW_H = 1000, 640
@@ -307,13 +307,14 @@ def scene(
     The view plays ``stint`` on a loop: its laps, then the tyre change at the line.
     Every lap drives the same path, so positions are sent once and each lap adds its times and speeds.
 
-    ``car`` is ``{"body", "wheels", "engine", "color"}``: part keys and #RRGGBB.
+    ``car`` is ``{"body", "wheels", "engine", "color", "tyre", "tyre_color"}``: part keys, the tyre and #RRGGBB colours.
     ``environment`` (one of ``ENVIRONMENTS``) picks the ground, trees and surroundings; a harbour
     puts the sea outside the ``seafront_m`` stretch.
     """
     if environment not in ENVIRONMENTS:
         raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {environment!r}")
-    car = {"body": "kart", "wheels": "standard", "engine": "standard", "color": "#F2F2F2", **(car or {})}
+    car = {"body": "kart", "wheels": "standard", "engine": "standard", "color": "#F2F2F2",
+           "tyre": MEDIUM.name, "tyre_color": MEDIUM.color_hex, **(car or {})}
     playbacks = [LapPlayback.from_lap(l.result, geometry) for l in stint.laps]
     half = geometry.width_m / 2
     left, right = geometry.offset(half), geometry.offset(-half)

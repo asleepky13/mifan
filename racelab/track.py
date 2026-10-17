@@ -76,14 +76,19 @@ class Track:
 class Weather:
     """Track-wide conditions.
 
-    ``grip_multiplier`` scales the surface grip of every segment (the engine's
-    existing grip hook). ``rain_intensity`` (0-1) is used by the renderer only.
-    The factors are illustrative, not calibrated against real tire data.
+    ``grip_multiplier`` is the grip left on slick tyres; ``Track.in_weather`` applies it
+    to every segment. ``water`` measures standing water: 1 is the point where
+    intermediates become faster than slicks (see ``racelab.tires``). ``rain_intensity``
+    (0-1) is used by the renderer only.
     """
 
     name: str
     grip_multiplier: float
     rain_intensity: float = 0.0
+
+    @property
+    def water(self) -> float:
+        return (1 - self.grip_multiplier) / SLICK_GRIP_LOSS_PER_WATER
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.grip_multiplier) and self.grip_multiplier > 0):
@@ -92,11 +97,16 @@ class Weather:
             raise ValueError(f"rain_intensity must be in [0, 1], got {self.rain_intensity!r}")
 
 
+SLICK_GRIP_LOSS_PER_WATER = 0.328
+"""Calibrated so slicks lap 111% of their dry time at water 1, Pirelli's slick-to-intermediate crossover."""
+
+# Water 0.5: slicks still fastest; 1.5: between the two Pirelli crossovers, intermediates
+# fastest; 2.5: past the intermediate-to-wet crossover, full wets fastest.
 WEATHER = (
     Weather("Dry", 1.0),
-    Weather("Damp", 0.85, 0.25),
-    Weather("Wet", 0.7, 0.6),
-    Weather("Heavy rain", 0.55, 1.0),
+    Weather("Damp", 1 - 0.5 * SLICK_GRIP_LOSS_PER_WATER, 0.25),
+    Weather("Wet", 1 - 1.5 * SLICK_GRIP_LOSS_PER_WATER, 0.6),
+    Weather("Heavy rain", 1 - 2.5 * SLICK_GRIP_LOSS_PER_WATER, 1.0),
 )
 
 
