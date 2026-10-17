@@ -4,17 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import altair as alt
-import pandas as pd
 import streamlit as st
 
 from racelab import CIRCUITS, WEATHER, simulate_lap
 from racelab.config import BodyPackage
-from racelab.geometry import build_geometry
+from racelab.geometry import build_geometry, build_racing_line
 from racelab.parts import CATEGORIES, DEFAULT_PARTS, PARTS_BY_CATEGORY, apply_parts
-from racelab.playback import LapPlayback
 from racelab.telemetry import build_telemetry
-from racelab.tires import COMPOUNDS_BY_NAME, PIT_LOSS_S, PIT_THRESHOLD, simulate_race
+from racelab.tires import CHANGE_AT_DURABILITY, GRIP_LOSS_WHEN_WORN, MEDIUM, TYRE_CHANGE_S, TYRES, TYRES_BY_NAME, tyre_stint
 from racelab.summary import (
     DRIVETRAIN_EFFICIENCY,
     MAX_TRACTIVE_FORCE_N,
@@ -36,7 +33,7 @@ SLIDERS = {
 }
 DEFAULTS = {key: spec[4] for key, spec in SLIDERS.items()}
 PART_DEFAULTS = {f"part_{c}": DEFAULT_PARTS[c] for c in CATEGORIES}
-RACE_DEFAULTS = {"start_compound": "Medium", "pit_compound": "Hard", "race_laps": 20}
+TYRE_DEFAULT = {"tyre": MEDIUM.name}
 TRACKS = {t.name: t for t in CIRCUITS}
 WEATHERS = {w.name: w for w in WEATHER}
 KMH = 3.6
@@ -81,29 +78,35 @@ h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; l
 .rl-changed { background:var(--fg); color:var(--bg); padding:.1rem .4rem; }
 .rl-note { font-family:var(--body); font-style:italic; color:var(--muted-fg); font-size:.95rem; margin-top:1rem; }
 .rl-notice { border:4px solid var(--fg); padding:1rem 1.25rem; font-family:var(--body); margin:1rem 0; }
+.rl-tyre { font-family:var(--mono); font-size:.75rem; display:flex; align-items:center; gap:.5rem; margin:-.5rem 0 .75rem; }
+.rl-tyre span { width:14px; height:14px; border-radius:50% !important; border:3px solid #111; box-sizing:border-box; }
+.rl-tyre-hint { font-family:var(--body); font-style:italic; font-size:.85rem; color:var(--muted-fg); margin:-.4rem 0 .9rem; }
 </style>
 """
 
 
 @st.cache_data(max_entries=256, show_spinner=False)
-def run(setup: tuple[tuple[str, float], ...], parts: tuple[str, ...], track_name: str, weather_name: str, compound: str):
-    """The car on fresh ``compound`` tyres and its flying lap."""
-    car = apply_parts(car_from_setup(**dict(setup)), [PARTS_BY_CATEGORY[c][k] for c, k in zip(CATEGORIES, parts)])
-    car = replace(car, tire_friction=car.tire_friction * COMPOUNDS_BY_NAME[compound].grip_multiplier)
-    lap = simulate_lap(car, TRACKS[track_name].in_weather(WEATHERS[weather_name]), step_m=2.0)
-    return car, lap, time_to_speed(car), corner_average_speed_mps(lap)
+def run(setup: tuple[tuple[str, float], ...], parts: tuple[str, ...], track_name: str, weather_name: str, tyre_name: str):
+    """The car on new tyres, its flying lap along the racing line, and its run on one set of tyres.
 
-
-@st.cache_data(max_entries=64, show_spinner=False)
-def race(setup, parts, track_name: str, weather_name: str, start: str, pit_to: str, laps: int):
+    The weather acts through the tyres' grip, so the laps run on the dry track.
+    """
     car = apply_parts(car_from_setup(**dict(setup)), [PARTS_BY_CATEGORY[c][k] for c, k in zip(CATEGORIES, parts)])
-    track = TRACKS[track_name].in_weather(WEATHERS[weather_name])
-    return simulate_race(car, track, geometry(track_name), laps, COMPOUNDS_BY_NAME[start], COMPOUNDS_BY_NAME[pit_to])
+    tyre, weather, track = TYRES_BY_NAME[tyre_name], WEATHERS[weather_name], TRACKS[track_name]
+    on_tyres = replace(car, tire_friction=car.tire_friction * tyre.grip(weather))
+    lap = simulate_lap(on_tyres, track, step_m=2.0, racing_line=racing_line(track_name))
+    stint = tyre_stint(car, track, tyre, weather, step_m=2.0, racing_line=racing_line(track_name))
+    return on_tyres, lap, time_to_speed(on_tyres), corner_average_speed_mps(lap), stint
 
 
 @st.cache_data(show_spinner=False)
 def geometry(track_name: str):
     return build_geometry(TRACKS[track_name], step_m=2.0)
+
+
+@st.cache_data(show_spinner=False)
+def racing_line(track_name: str):
+    return build_racing_line(geometry(track_name))
 
 
 def notice(text: str) -> None:
@@ -126,27 +129,32 @@ def stat(label: str, unit: str, current: float | None, baseline: float | None, d
 def reset() -> None:
     st.session_state.update(DEFAULTS)
     st.session_state.update(PART_DEFAULTS)
-    st.session_state.update(RACE_DEFAULTS)
+    st.session_state.update(TYRE_DEFAULT)
 
 
 st.set_page_config(page_title="RaceLab", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
-for key, value in {**DEFAULTS, **PART_DEFAULTS, **RACE_DEFAULTS}.items():
+for key, value in {**DEFAULTS, **PART_DEFAULTS, **TYRE_DEFAULT}.items():
     st.session_state.setdefault(key, value)
 
 with st.sidebar:
     st.markdown('<div class="rl-kicker">Car setup</div>', unsafe_allow_html=True)
     track_name = st.selectbox("Circuit", list(TRACKS))
     weather_name = st.selectbox("Weather", list(WEATHERS))
+    tyre = TYRES_BY_NAME[st.selectbox("Tyres", [t.name for t in TYRES], key="tyre")]
+    kind = lambda t: "Slicks" if t in TYRES[:3] else f"{t.name}s"
+    best = kind(max(TYRES, key=lambda t: t.grip(WEATHERS[weather_name])))
+    st.markdown(
+        f'<div class="rl-tyre"><span style="background:{tyre.color_hex}"></span>{tyre.name} · grip '
+        f'{tyre.grip(WEATHERS[weather_name]):.2f}× in {weather_name.lower()}</div>'
+        + ("" if best == kind(tyre) else f'<div class="rl-tyre-hint">{best} have the most grip in these conditions.</div>'),
+        unsafe_allow_html=True,
+    )
     st.markdown('<div class="rl-kicker">Garage</div>', unsafe_allow_html=True)
     for category in CATEGORIES:
         options = PARTS_BY_CATEGORY[category]
         chosen = st.selectbox(category.title(), list(options), format_func=lambda k, o=options: o[k].name, key=f"part_{category}")
         st.caption(options[chosen].describe())
-    st.markdown('<div class="rl-kicker">Race strategy</div>', unsafe_allow_html=True)
-    st.selectbox("Start tyres", list(COMPOUNDS_BY_NAME), key="start_compound")
-    st.selectbox("Pit for", list(COMPOUNDS_BY_NAME), key="pit_compound")
-    st.slider("Race laps", 1, 60, key="race_laps")
     st.markdown('<div class="rl-kicker">Tuning</div>', unsafe_allow_html=True)
     for key, (label, unit, lo, hi, _, step, number_format) in SLIDERS.items():
         st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
@@ -156,18 +164,15 @@ with st.sidebar:
 setup = {key: st.session_state[key] for key in SLIDERS}
 parts = tuple(st.session_state[f"part_{c}"] for c in CATEGORIES)
 try:
-    start_compound = st.session_state["start_compound"]
-    car, lap, zero_to_100, corner = run(tuple(setup.items()), parts, track_name, weather_name, start_compound)
-    base_car, base_lap, base_zero_to_100, base_corner = run(
-        tuple(DEFAULTS.items()), tuple(DEFAULT_PARTS.values()), track_name, weather_name, RACE_DEFAULTS["start_compound"])
-    race_result = race(tuple(setup.items()), parts, track_name, weather_name, start_compound,
-                       st.session_state["pit_compound"], st.session_state["race_laps"])
+    car, lap, zero_to_100, corner, stint = run(tuple(setup.items()), parts, track_name, weather_name, tyre.name)
+    base_car, base_lap, base_zero_to_100, base_corner, base_stint = run(
+        tuple(DEFAULTS.items()), tuple(DEFAULT_PARTS.values()), track_name, weather_name, MEDIUM.name)
 except (ValueError, ArithmeticError) as exc:
     notice(f"<strong>Simulation failed for this setup.</strong> {exc}")
     st.stop()
 
 st.markdown(
-    f'<div class="rl-kicker">RaceLab V2 · {track_name} · {lap.total_distance_m / 1000:.2f} km · {weather_name} · {start_compound} tyres</div>'
+    f'<div class="rl-kicker">RaceLab V2 · {track_name} · {lap.total_distance_m / 1000:.2f} km · {weather_name}</div>'
     '<h1 class="rl-hero">Race<em>Lab</em></h1><div class="rl-rule"><span></span></div>',
     unsafe_allow_html=True,
 )
@@ -181,6 +186,7 @@ st.markdown(
     + stat("Average speed", "km/h", lap.average_speed_mps * KMH, base_lap.average_speed_mps * KMH, 1)
     + stat("Cornering · avg corner speed", "km/h", corner and corner * KMH, base_corner and base_corner * KMH, 1)
     + stat("Acceleration · 0–100 km/h", "s", zero_to_100, base_zero_to_100, 2)
+    + stat(f"Tyre life · {tyre.name} set", "laps", len(stint.laps), len(base_stint.laps), 0)
     + "</div>",
     unsafe_allow_html=True,
 )
@@ -188,26 +194,34 @@ st.markdown(
 st.markdown('<h2 class="rl-h2">On track</h2>', unsafe_allow_html=True)
 track_geometry = geometry(track_name)
 # Trusted HTML: built here from engine output, no user-supplied markup.
-car_look = {**dict(zip(CATEGORIES, parts)), "color": BodyPackage(color_hex=body_color).color_hex}
+car_look = {**dict(zip(CATEGORIES, parts)), "color": BodyPackage(color_hex=body_color).color_hex,
+            "tyre": tyre.name, "tyre_color": tyre.color_hex}
 st.iframe(
     track_view_html(
-        track_geometry, LapPlayback.from_lap(lap, track_geometry), car_look, WEATHERS[weather_name],
+        track_geometry, stint, car_look, WEATHERS[weather_name],
         first_straight_m=TRACKS[track_name].segments[0].length_m, environment=TRACKS[track_name].environment,
+        seafront_m=TRACKS[track_name].seafront_m,
     ),
     height=860,
 )
 st.markdown(
     "<p class='rl-note'>Circuits are simplified layouts inspired by the real tracks: corner order and lap length "
-    "follow the originals, exact shapes do not. Weather scales track grip (Dry 100%, Damp 85%, Wet 70%, Heavy rain 55%); "
-    "these factors are illustrative. The car follows the track centerline at the simulated speed: the engine is a point mass, "
-    "so there is no racing line, slip or yaw. Every lap is the same flying lap. In the overview the car is drawn "
+    "follow the originals, exact shapes do not. The car drives a minimum-curvature racing line: wide on corner entry, inside at the "
+    "apex, back to the middle on long straights. It is a point mass on that line, so there is no slip or yaw. "
+    f"Tyres lose durability with every lap, and grip with it (up to {GRIP_LOSS_WHEN_WORN:.0%} on a worn set). At "
+    f"{CHANGE_AT_DURABILITY:.0%} durability the car stops at the line for {TYRE_CHANGE_S:.0f} s to change tyres, then "
+    "starts again on a new set. Tyres follow Pirelli's F1 range (Soft, Medium, Hard, Intermediate, Wet, in their "
+    "sidewall colours). Pirelli publishes no grip or wear coefficients, so each tyre is fitted to published figures: "
+    "about 1% of lap time between compounds, slicks giving way to Intermediates at 110-112% of the dry lap time and "
+    "Intermediates to Wets at about 118%, and Pirelli's 2025 Monza pit windows for stint length (Soft 18, Medium 25, "
+    "Hard 31 laps there). The RaceLab car is not an F1 car, so these set the tyres' relative pace and life. In the overview the car is drawn "
     "larger than scale so it stays visible. Garage parts change mass, power, drag, grip, braking and traction "
     "(effects listed under each part), so they change the lap; their values are game-style balance, not measured data.</p>",
     unsafe_allow_html=True,
 )
 
 st.markdown('<h2 class="rl-h2">Telemetry</h2>', unsafe_allow_html=True)
-track_in_weather = TRACKS[track_name].in_weather(WEATHERS[weather_name])
+track_in_weather = TRACKS[track_name]  # dry track: the weather is already in each car's tyre grip
 st.iframe(
     telemetry_html(
         build_telemetry(lap, car, track_in_weather, track_geometry),
@@ -222,52 +236,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<h2 class="rl-h2">Race</h2>', unsafe_allow_html=True)
-stops = [l.lap for l in race_result.laps if l.pit_after]
-fastest = min(race_result.laps, key=lambda l: l.lap_time_s)
-st.markdown(
-    '<div class="rl-stats">'
-    f'<div class="rl-stat"><div class="rl-kicker">Race time · {len(race_result.laps)} laps</div>'
-    f'<div class="rl-value">{race_result.total_time_s / 60:,.2f}<span class="rl-unit">min</span></div>'
-    f'<div class="rl-base">{race_result.total_time_s:,.1f} s incl. pit stops</div></div>'
-    f'<div class="rl-stat"><div class="rl-kicker">Pit stops</div><div class="rl-value">{race_result.pit_stops}</div>'
-    f'<div class="rl-base">{"After lap " + ", ".join(map(str, stops)) if stops else "No stop needed"}</div></div>'
-    f'<div class="rl-stat"><div class="rl-kicker">Fastest lap</div>'
-    f'<div class="rl-value">{fastest.lap_time_s:.2f}<span class="rl-unit">s</span></div>'
-    f'<div class="rl-base">Lap {fastest.lap} · {fastest.compound}</div></div>'
-    "</div>",
-    unsafe_allow_html=True,
-)
-laps_df = pd.DataFrame({
-    "Lap": [l.lap for l in race_result.laps],
-    "Tyres": [l.compound for l in race_result.laps],
-    "Lap time (s)": [round(l.lap_time_s, 3) for l in race_result.laps],
-    "Wear at lap end (%)": [round(100 * l.wear_end, 1) for l in race_result.laps],
-    "Pit after lap": [l.pit_after for l in race_result.laps],
-})
-compound_color = alt.Color("Tyres:N", scale=alt.Scale(domain=list(COMPOUNDS_BY_NAME), range=["#c8102e", "#e0b000", "#555555"]))
-base = alt.Chart(laps_df).encode(x=alt.X("Lap:Q", axis=alt.Axis(tickMinStep=1)), tooltip=list(laps_df.columns))
-left, right = st.columns(2)
-left.altair_chart(
-    base.mark_line(point=True, color="#000").encode(y=alt.Y("Lap time (s):Q", scale=alt.Scale(zero=False)))
-    + base.mark_point(filled=True, size=70).encode(y="Lap time (s):Q", color=compound_color),
-    width="stretch",
-)
-right.altair_chart(
-    base.mark_bar().encode(y=alt.Y("Wear at lap end (%):Q", scale=alt.Scale(domain=[0, 100])), color=compound_color)
-    + alt.Chart(pd.DataFrame({"Wear at lap end (%)": [100 * PIT_THRESHOLD]}))
-    .mark_rule(strokeDash=[4, 4], color="#000").encode(y="Wear at lap end (%):Q"),
-    width="stretch",
-)
-st.markdown(
-    f"<p class='rl-note'>Soft tyres have 8% more grip than Medium and wear 1.8× faster; Hard have 7% less grip and last "
-    f"1.7× longer. Wear grows with the tyre work each lap (distance × how hard the tyres are pushed, braking, accelerating "
-    f"and cornering), and a worn tyre loses up to 15% grip, so laps slow down through a stint. At {PIT_THRESHOLD:.0%} wear "
-    f"(the dashed line) the car pits at the end of the lap, losing {PIT_LOSS_S:.0f} s, and leaves on fresh tyres of the "
-    f"pit compound. The flying lap above is on fresh start tyres. Rates and pit loss are illustrative, not calibrated.</p>",
-    unsafe_allow_html=True,
-)
-
 st.markdown('<h2 class="rl-h2">Setup</h2>', unsafe_allow_html=True)
 rows = "".join(
     f"<tr><td>{label}</td><td class='num'><span class='{'rl-changed' if setup[key] != DEFAULTS[key] else ''}'>"
@@ -277,7 +245,8 @@ rows = "".join(
     f"<tr><td>{c.title()}</td><td class='num'><span class='{'rl-changed' if k != DEFAULT_PARTS[c] else ''}'>"
     f"{PARTS_BY_CATEGORY[c][k].name}</span></td><td class='num'>{PARTS_BY_CATEGORY[c][DEFAULT_PARTS[c]].name}</td><td class='num'></td></tr>"
     for c, k in zip(CATEGORIES, parts)
-)
+) + (f"<tr><td>Tyres</td><td class='num'><span class='{'rl-changed' if tyre is not MEDIUM else ''}'>{tyre.name}</span></td>"
+     f"<td class='num'>{MEDIUM.name}</td><td class='num'></td></tr>")
 st.markdown(
     f"<table class='rl-table'><tr><th>Parameter</th><th>Current</th><th>Default</th><th>Unit</th></tr>{rows}</table>"
     f"<p class='rl-note'>Highlighted values differ from the default. Fixed for every setup: drivetrain efficiency "

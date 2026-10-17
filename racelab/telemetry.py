@@ -6,8 +6,9 @@ Every channel follows from the engine's own output, not a separate model:
   drive force available at that speed and grip (100% = at the engine/traction limit);
 - brake: braking force the lap needs, ``-(m * a + F_drag)``, as a share of the
   braking limit. Drag helps slow the car, so brake effort is below 100% at speed;
-- steering: kinematic road-wheel angle ``atan(wheelbase * curvature)``. The
-  centerline is lines and arcs, so steering steps at corner entry and exit;
+- steering: kinematic road-wheel angle ``atan(wheelbase * curvature)`` of the
+  driven path. On the centerline (lines and arcs) it steps at corner entry and
+  exit; on a racing line it builds up smoothly;
 - no gear channel: the engine has no gearbox.
 """
 
@@ -59,13 +60,13 @@ def build_telemetry(lap: LapResult, car: Car, track: Track, geometry: TrackGeome
     throttle = np.clip(np.where(needed > 0, needed / available, 0.0), 0, 1) * 100
     brake = np.clip(np.where(needed < 0, -needed / brake_limit, 0.0), 0, 1) * 100
 
-    k = geometry.curvature_per_m[np.round(s / geometry.step_m).astype(int) % len(geometry.curvature_per_m)]
-    steering = np.degrees(np.arctan(WHEELBASE_M * k))
+    steering = np.degrees(np.arctan(WHEELBASE_M * lap.curvature_per_m))  # curvature of the driven path
 
-    v_next = np.roll(v, -1)
-    dt = 2 * lap.step_m / (v + v_next)
+    v_next = np.append(v[1:], lap.finish_speed_mps)
+    dt = 2 * lap.step_length_m / (v + v_next)
     time = np.concatenate(([0.0], np.cumsum(dt)[:-1]))
-    x, y, _ = geometry.pose_at(s)
+    x, y, h = geometry.pose_at(s)
+    x, y = x - lap.lateral_offset_m * np.sin(h), y + lap.lateral_offset_m * np.cos(h)
     return Telemetry(float(np.sum(dt)), lap.total_distance_m, s, time, v, throttle, brake, steering, x, y)
 
 

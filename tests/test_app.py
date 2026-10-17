@@ -33,19 +33,21 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(at.selectbox(key="part_engine").value, "standard")
         self.assertEqual(lap_time(at), default)
 
-    def test_race_strategy_pits_and_reset_restores_it(self):
-        at = AppTest.from_file("../app.py", default_timeout=60).run()
-        race = lambda: next(m.value for m in at.markdown if "Pit stops" in m.value)
-        self.assertIn("After lap", race())  # 20 laps on Mediums needs a stop
-        default = lap_time(at)
-        at.selectbox(key="start_compound").set_value("Soft").run()
+    def test_switching_tyres_changes_pace_and_life_and_reset_restores_them(self):
+        at = AppTest.from_file("../app.py", default_timeout=120).run()
+        life = lambda: int(re.search(r"Tyre life · \w+ set</div><div class=\"rl-value\">(\d+)<", next(
+            m.value for m in at.markdown if m.value.startswith('<div class="rl-stats">'))).group(1))
+        default, default_life = float(lap_time(at)), life()
+        at.selectbox(key="tyre").set_value("Soft").run()
         self.assertFalse(at.exception)
-        self.assertLess(float(lap_time(at)), float(default))  # more grip on fresh softs
-        at.slider(key="race_laps").set_value(3).run()
-        self.assertIn("No stop needed", race())
+        self.assertLess(float(lap_time(at)), default)  # softer is faster
+        self.assertLess(life(), default_life)           # but wears out sooner
+        at.selectbox(key="tyre").set_value("Intermediate").run()
+        self.assertGreater(float(lap_time(at)), default)
+        self.assertTrue(any("Slicks have the most grip" in m.value for m in at.markdown))
         at.button[0].click().run()
-        self.assertEqual((at.selectbox(key="start_compound").value, at.slider(key="race_laps").value), ("Medium", 20))
-        self.assertEqual(lap_time(at), default)
+        self.assertEqual(at.selectbox(key="tyre").value, "Medium")
+        self.assertEqual(float(lap_time(at)), default)
 
     def test_every_slider_extreme_renders(self):
         at = AppTest.from_file("../app.py", default_timeout=30).run()
