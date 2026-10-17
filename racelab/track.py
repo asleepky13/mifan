@@ -8,12 +8,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Segment:
-    """One piece of track. ``radius_m=None`` designates a straight."""
+    """One piece of track. ``radius_m=None`` designates a straight.
+
+    ``direction`` is +1 for a left (counter-clockwise) corner and -1 for a right
+    corner; the speed simulation ignores it, the track geometry uses it.
+    """
 
     length_m: float
     radius_m: float | None = None
     grip_multiplier: float = 1.0
     label: str = ""
+    direction: int = 1
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.length_m) and self.length_m > 0):
@@ -22,6 +27,8 @@ class Segment:
             raise ValueError(f"radius_m must be positive and finite or None, got {self.radius_m!r}")
         if not (math.isfinite(self.grip_multiplier) and self.grip_multiplier > 0):
             raise ValueError(f"grip_multiplier must be positive and finite, got {self.grip_multiplier!r}")
+        if self.direction not in (1, -1):
+            raise ValueError(f"direction must be 1 (left) or -1 (right), got {self.direction!r}")
 
     @property
     def is_straight(self) -> bool:
@@ -34,50 +41,61 @@ class Track:
 
     name: str
     segments: tuple[Segment, ...]
+    width_m: float = 12.0
 
     def __post_init__(self) -> None:
         if not self.segments:
             raise ValueError("a track needs at least one segment")
+        if not (math.isfinite(self.width_m) and self.width_m > 0):
+            raise ValueError(f"width_m must be positive and finite, got {self.width_m!r}")
 
     @property
     def total_length_m(self) -> float:
         return sum(s.length_m for s in self.segments)
 
 
+def _corner(radius_m: float, degrees: float, direction: int, **kwargs) -> Segment:
+    return Segment(radius_m * math.radians(degrees), radius_m, direction=direction, **kwargs)
+
+
+LEFT, RIGHT = 1, -1
+
+# Both layouts close exactly as loops (see racelab.geometry); straights are in metres.
 TECHNICAL_CIRCUIT = Track(
     "Harrow Bend (technical)",
     (
-        Segment(250, label="Main straight"),
-        Segment(40, 25, label="T1 hairpin"),
-        Segment(120),
-        Segment(70, 45, label="T2"),
+        Segment(300, label="Main straight"),
+        _corner(25, 90, LEFT, label="T1"),
         Segment(80),
-        Segment(35, 18, grip_multiplier=0.9, label="T3 dusty hairpin"),
-        Segment(200),
-        Segment(90, 60, label="T4 sweeper"),
+        _corner(30, 90, LEFT, label="T2"),
         Segment(60),
-        Segment(50, 30, label="T5"),
-        Segment(150),
-        Segment(40, 22, label="T6"),
-        Segment(180),
-        Segment(60, 40, label="T7"),
-        Segment(100),
-        Segment(55, 35, label="Final corner"),
+        _corner(20, 90, RIGHT, label="T3"),
+        Segment(120),
+        _corner(22, 180, LEFT, grip_multiplier=0.9, label="T4 dusty hairpin"),
+        Segment(140),
+        _corner(35, 90, RIGHT, label="T5"),
+        Segment(146),
+        _corner(30, 90, LEFT, label="T6"),
+        Segment(30),
+        _corner(40, 90, LEFT, label="Final corner"),
     ),
+    width_m=10.0,
 )
 
 HIGH_SPEED_CIRCUIT = Track(
     "Longreach Raceway (high-speed)",
     (
         Segment(900, label="Main straight"),
-        Segment(200, 150, label="T1"),
+        _corner(150, 90, LEFT, label="T1"),
         Segment(600),
-        Segment(350, 300, label="T2 fast sweeper"),
-        Segment(1100, label="Back straight"),
-        Segment(140, 90, label="T3"),
+        _corner(300, 70, LEFT, label="T2 fast sweeper"),
+        Segment(1268.7, label="Back straight"),
+        _corner(90, 110, LEFT, label="T3"),
         Segment(400),
-        Segment(300, 220, grip_multiplier=0.95, label="T4 bumpy"),
-        Segment(700),
-        Segment(450, 400, label="T5 banking-free curve"),
+        _corner(220, 30, RIGHT, grip_multiplier=0.95, label="T4 bumpy kink"),
+        Segment(313.2),
+        _corner(400, 120, LEFT, label="T5"),
+        Segment(300),
     ),
+    width_m=14.0,
 )

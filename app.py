@@ -1,4 +1,4 @@
-"""RaceLab V1 — local web UI. Run with: streamlit run app.py"""
+"""RaceLab V2 — local web UI. Run with: streamlit run app.py"""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ import pandas as pd
 import streamlit as st
 
 from racelab import HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, simulate_lap
+from racelab.config import BodyPackage
+from racelab.geometry import build_geometry
+from racelab.playback import LapPlayback
 from racelab.summary import (
     DRIVETRAIN_EFFICIENCY,
     MAX_TRACTIVE_FORCE_N,
@@ -14,6 +17,7 @@ from racelab.summary import (
     corner_average_speed_mps,
     time_to_speed,
 )
+from ui.track_view import track_view_html
 
 # key: (label, unit, min, max, default, step, format)
 SLIDERS = {
@@ -79,6 +83,11 @@ def run(setup: tuple[tuple[str, float], ...], track_name: str):
     return lap, time_to_speed(car), corner_average_speed_mps(lap)
 
 
+@st.cache_data(show_spinner=False)
+def geometry(track_name: str):
+    return build_geometry(TRACKS[track_name], step_m=2.0)
+
+
 def notice(text: str) -> None:
     st.markdown(f'<div class="rl-notice">{text}</div>', unsafe_allow_html=True)
 
@@ -111,6 +120,7 @@ with st.sidebar:
     for key, (label, unit, lo, hi, _, step, number_format) in SLIDERS.items():
         st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
     st.button("Reset to default →", on_click=reset)
+    body_color = st.color_picker("Body color", BodyPackage().color_hex)
 
 setup = {key: st.session_state[key] for key in SLIDERS}
 try:
@@ -121,7 +131,7 @@ except (ValueError, ArithmeticError) as exc:
     st.stop()
 
 st.markdown(
-    f'<div class="rl-kicker">RaceLab V1 · {track_name} · {lap.total_distance_m / 1000:.2f} km</div>'
+    f'<div class="rl-kicker">RaceLab V2 · {track_name} · {lap.total_distance_m / 1000:.2f} km</div>'
     '<h1 class="rl-hero">Race<em>Lab</em></h1><div class="rl-rule"><span></span></div>',
     unsafe_allow_html=True,
 )
@@ -136,6 +146,17 @@ st.markdown(
     + stat("Cornering · avg corner speed", "km/h", corner and corner * KMH, base_corner and base_corner * KMH, 1)
     + stat("Acceleration · 0–100 km/h", "s", zero_to_100, base_zero_to_100, 2)
     + "</div>",
+    unsafe_allow_html=True,
+)
+
+st.markdown('<h2 class="rl-h2">On track</h2>', unsafe_allow_html=True)
+track_geometry = geometry(track_name)
+# Trusted HTML: built here from engine output, no user-supplied markup.
+st.iframe(track_view_html(track_geometry, LapPlayback.from_lap(lap, track_geometry), BodyPackage(color_hex=body_color)), height=840)
+st.markdown(
+    "<p class='rl-note'>The car follows the track centerline at the simulated speed: the engine is a point mass, "
+    "so there is no racing line, slip or yaw. Every lap is the same flying lap. In the overview the car is drawn "
+    "larger than scale so it stays visible.</p>",
     unsafe_allow_html=True,
 )
 

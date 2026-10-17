@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; border-radius: 0; }
+  body { margin: 0; font-family: 'JetBrains Mono', monospace; color: #000; background: #fff; }
+  .hud { display: grid; grid-template-columns: repeat(5, 1fr); background: #000; color: #fff; }
+  .hud div { padding: .7rem .9rem; border-right: 1px solid #333; }
+  .hud span { display: block; font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: #BDBDBD; }
+  .hud b { display: block; font-family: 'Playfair Display', Georgia, serif; font-size: 1.6rem; font-weight: 700; margin-top: .25rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; padding: .6rem 0; align-items: center; }
+  button, select { font-family: inherit; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase;
+    background: #000; color: #fff; border: 2px solid #000; padding: .55rem 1rem; min-height: 40px; cursor: pointer; }
+  button:hover { background: #fff; color: #000; }
+  select { background: #fff; color: #000; }
+  button:focus-visible, select:focus-visible { outline: 3px solid #000; outline-offset: 3px; }
+  label { font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; margin-left: .5rem; }
+  canvas { display: block; width: 100%; height: auto; border: 1px solid #000; }
+  @media (max-width: 640px) { .hud { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div><span>Speed</span><b id="speed">0</b></div>
+  <div><span>Lap</span><b id="lap">1</b></div>
+  <div><span>Lap time</span><b id="laptime">0.00</b></div>
+  <div><span>Last lap</span><b id="last">—</b></div>
+  <div><span>Status</span><b id="status">Ready</b></div>
+</div>
+<div class="controls">
+  <button id="start">Start</button>
+  <button id="pause">Pause</button>
+  <button id="reset">Reset</button>
+  <label for="mult">Sim speed</label>
+  <select id="mult"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option><option>8</option></select>
+  <label for="view">View</label>
+  <select id="view"><option value="overview">Overview</option><option value="follow">Follow car</option></select>
+</div>
+<canvas id="c" aria-label="Top-down track view"></canvas>
+<script>
+const S = __SCENE__;
+const F = S.frames, T = S.track, W = S.view.w, H = S.view.h;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const dpr = window.devicePixelRatio || 1;
+cv.width = W * dpr; cv.height = H * dpr;
+
+function path(p, close) {
+  const out = new Path2D();
+  out.moveTo(p.x[0], p.y[0]);
+  for (let i = 1; i < p.x.length; i++) out.lineTo(p.x[i], p.y[i]);
+  if (close) out.closePath();
+  return out;
+}
+const center = path(T.center, true), left = path(T.left, true), right = path(T.right, true);
+const curbs = T.curbs.map(c => path(c, false));
+
+// Linear interpolation between simulation samples; laps repeat (flying lap).
+function stateAt(time) {
+  const lap = Math.floor(time / S.lap_time), t = time - lap * S.lap_time;
+  let lo = 0, hi = F.t.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (F.t[mid] <= t) lo = mid; else hi = mid; }
+  const f = (t - F.t[lo]) / (F.t[hi] - F.t[lo] || 1), mix = k => F[k][lo] + (F[k][hi] - F[k][lo]) * f;
+  return { lap: lap + 1, t, x: mix('x'), y: mix('y'), h: mix('h'), v: mix('v') };
+}
+
+function drawCar(s, scale) {
+  const L = S.body.length, B = S.body.width;
+  ctx.save();
+  ctx.translate(s.x, s.y); ctx.rotate(s.h);
+  const k = document.getElementById('view').value === 'overview' ? Math.max(1, 22 / (L * scale)) : 1;
+  ctx.scale(k, k);  // overview only: enlarged so the car stays visible
+  ctx.fillStyle = '#111';
+  for (const wx of [-1.35, 1.35]) for (const wy of [-1, 1]) ctx.fillRect(wx - 0.35, wy * (B / 2 - 0.1) - 0.15, 0.7, 0.3);
+  ctx.beginPath();
+  ctx.moveTo(-L / 2, -B * 0.42); ctx.lineTo(L / 2 - 0.7, -B * 0.42); ctx.lineTo(L / 2, -B * 0.2);
+  ctx.lineTo(L / 2, B * 0.2); ctx.lineTo(L / 2 - 0.7, B * 0.42); ctx.lineTo(-L / 2, B * 0.42); ctx.closePath();
+  ctx.fillStyle = S.body.color; ctx.fill();
+  ctx.lineWidth = 0.08; ctx.strokeStyle = '#000'; ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(0.2, -B * 0.3, 0.9, B * 0.6);       // windscreen faces forward
+  ctx.fillRect(-1.6, -B * 0.28, 0.5, B * 0.56);                                         // rear window
+  ctx.restore();
+}
+
+function draw(s) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#3f7a36'; ctx.fillRect(0, 0, W, H);
+  const follow = document.getElementById('view').value === 'follow';
+  const scale = follow ? S.follow_scale : S.camera.scale;
+  const ox = follow ? W / 2 - scale * s.x : S.camera.ox, oy = follow ? H / 2 + scale * s.y : S.camera.oy;
+  ctx.setTransform(dpr * scale, 0, 0, -dpr * scale, dpr * ox, dpr * oy);  // world metres, +y up
+  ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+  ctx.strokeStyle = '#356b2d'; ctx.lineWidth = T.width + 8; ctx.stroke(center);   // verge
+  ctx.strokeStyle = '#3a3a3c'; ctx.lineWidth = T.width; ctx.stroke(center);       // asphalt
+  ctx.lineWidth = T.curb_width;
+  for (const c of curbs) {
+    ctx.setLineDash([]); ctx.strokeStyle = '#fff'; ctx.stroke(c);
+    ctx.setLineDash([1.5, 1.5]); ctx.strokeStyle = '#c8102e'; ctx.stroke(c);
+  }
+  ctx.setLineDash([]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.25; ctx.stroke(left); ctx.stroke(right);
+  ctx.save();  // chequered start/finish line across the track
+  ctx.translate(T.start.x, T.start.y); ctx.rotate(T.start.h);
+  for (let i = 0; i < 2; i++) for (let j = 0; j < Math.ceil(T.width); j++) {
+    ctx.fillStyle = (i + j) % 2 ? '#000' : '#fff';
+    ctx.fillRect(i - 1, j - T.width / 2, 1, Math.min(1, T.width - j));
+  }
+  ctx.restore();
+  drawCar(s, scale);
+}
+
+const $ = id => document.getElementById(id);
+let simTime = 0, running = false, last = null;
+function hud(s, status) {
+  $('speed').textContent = (s.v * 3.6).toFixed(0) + ' km/h';
+  $('lap').textContent = s.lap;
+  $('laptime').textContent = s.t.toFixed(2) + ' s';
+  $('last').textContent = s.lap > 1 ? S.lap_time.toFixed(2) + ' s' : '—';
+  $('status').textContent = status;
+}
+function frame(now) {
+  if (running) { simTime += (now - last) / 1000 * parseFloat($('mult').value); last = now; }
+  const s = stateAt(simTime);
+  draw(s); hud(s, running ? 'Running' : simTime > 0 ? 'Paused' : 'Ready');
+  if (running) requestAnimationFrame(frame);
+}
+$('start').onclick = () => { if (!running) { running = true; last = performance.now(); requestAnimationFrame(frame); } };
+$('pause').onclick = () => { running = false; requestAnimationFrame(frame); };
+$('reset').onclick = () => { running = false; simTime = 0; requestAnimationFrame(frame); };
+$('view').onchange = () => requestAnimationFrame(frame);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
