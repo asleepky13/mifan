@@ -1,7 +1,7 @@
 """Kart-style parts. Each part modifies real engine inputs, so it changes the
 simulated speed profile (and therefore lap time and on-track movement).
 
-Effects multiply (``*_scale``) or add (``mass_delta_kg``) on top of the base
+Effects multiply (``*_scale``) or add (``mass_delta_kg``, ``downforce_delta_m2``) on top of the base
 setup. The numbers are game-style balance choices, not measured data.
 """
 
@@ -12,7 +12,7 @@ from typing import Iterable
 
 from racelab.car import Car
 
-CATEGORIES = ("body", "wheels", "engine")
+CATEGORIES = ("body", "wheels", "engine", "wing")
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,8 @@ class Part:
     grip_scale: float = 1.0
     braking_scale: float = 1.0
     traction_scale: float = 1.0
+    downforce_delta_m2: float = 0.0
+    """Added C_L * A (m^2)."""
 
     def __post_init__(self) -> None:
         if self.category not in CATEGORIES:
@@ -42,6 +44,8 @@ class Part:
         ):
             if value != 1.0:
                 bits.append(f"{label} ×{value:g}")
+        if self.downforce_delta_m2:
+            bits.append(f"downforce +{self.downforce_delta_m2:g} m²")
         return " · ".join(bits) or "baseline"
 
 
@@ -58,6 +62,9 @@ PARTS = (
     Part("turbo", "Turbo", "engine", mass_delta_kg=40, power_scale=1.25),
     Part("electric", "Electric", "engine", mass_delta_kg=80, power_scale=0.9, traction_scale=1.3),
     Part("light", "Lightweight", "engine", mass_delta_kg=-50, power_scale=0.85),
+    Part("none", "No Wing", "wing"),
+    Part("low", "Low-Drag Wing", "wing", mass_delta_kg=8, drag_scale=1.04, downforce_delta_m2=0.6),
+    Part("high", "High-Downforce Wing", "wing", mass_delta_kg=15, drag_scale=1.15, downforce_delta_m2=1.8),
 )
 PARTS_BY_CATEGORY = {c: {p.key: p for p in PARTS if p.category == c} for c in CATEGORIES}
 DEFAULT_PARTS = {c: next(iter(PARTS_BY_CATEGORY[c])) for c in CATEGORIES}
@@ -72,6 +79,7 @@ def apply_parts(car: Car, parts: Iterable[Part]) -> Car:
         mass_kg=car.mass_kg, power_w=car.power_w, drag_coefficient=car.drag_coefficient,
         frontal_area_m2=car.frontal_area_m2, tire_friction=car.tire_friction,
         max_braking_decel_mps2=car.max_braking_decel_mps2, max_tractive_force_n=car.max_tractive_force_n,
+        downforce_coefficient_m2=car.downforce_coefficient_m2,
     )
     for p in parts:
         fields["mass_kg"] += p.mass_delta_kg
@@ -81,4 +89,5 @@ def apply_parts(car: Car, parts: Iterable[Part]) -> Car:
         fields["tire_friction"] *= p.grip_scale
         fields["max_braking_decel_mps2"] *= p.braking_scale
         fields["max_tractive_force_n"] *= p.traction_scale
+        fields["downforce_coefficient_m2"] += p.downforce_delta_m2
     return replace(car, **fields)

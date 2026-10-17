@@ -18,7 +18,6 @@ NOT_MODELED = (
     "TireCompound.temperature_c",
     "TireCompound.optimal_temperature_c",
     "TireCompound.wear_fraction",
-    "AeroPackage.downforce_coefficient_m2",
 )
 
 
@@ -54,7 +53,7 @@ class AeroPackage:
     frontal_area_m2: float = 2.2
     """Used."""
     downforce_coefficient_m2: float = 0.0
-    """Stored only: lift coefficient times area (C_L * A); no downforce model yet."""
+    """Used: lift coefficient times area (C_L * A)."""
 
     def __post_init__(self) -> None:
         _check_positive(drag_coefficient=self.drag_coefficient, frontal_area_m2=self.frontal_area_m2)
@@ -100,4 +99,5 @@ class VehicleConfig:
             max_braking_decel_mps2=self.max_braking_decel_mps2,
             max_tractive_force_n=self.max_tractive_force_n,
             drivetrain_efficiency=self.drivetrain_efficiency,
+            downforce_coefficient_m2=self.aero.downforce_coefficient_m2,
         )

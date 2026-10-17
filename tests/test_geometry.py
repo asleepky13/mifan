@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from racelab.config import NOT_MODELED, AeroPackage, BodyPackage, TireCompound, VehicleConfig
-from racelab.geometry import Camera, build_geometry
+from racelab.geometry import Camera, build_geometry, build_racing_line
 from racelab.playback import LapPlayback
 from racelab.simulation import simulate_lap
 from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
@@ -72,6 +72,42 @@ class GeometryTest(unittest.TestCase):
             build_geometry(TECHNICAL_CIRCUIT, step_m=0)
 
 
+class RacingLineTest(unittest.TestCase):
+    def test_line_stays_on_track_and_uses_the_width_in_corners(self):
+        for track in TRACKS:
+            g = build_geometry(track)
+            line = build_racing_line(g)
+            room = track.width_m / 2 - 1.5
+            with self.subTest(track=track.name):
+                self.assertTrue(np.all(np.abs(line.offset_m) <= room + 1e-9))
+                self.assertGreater(np.abs(line.offset_m).max(), 0.95 * room)  # reaches an edge somewhere
+                # Less total squared curvature than the centerline: corners are straightened.
+                self.assertLess(np.sum(line.curvature_per_m**2 * line.step_length_m), np.sum(g.curvature_per_m**2 * g.step_m))
+                self.assertLess(line.step_length_m.sum(), g.length_m)  # and the path is shorter
+                gaps = np.hypot(np.diff(line.x_m), np.diff(line.y_m))
+                self.assertTrue(np.all(gaps < 2 * g.step_m))  # continuous, no jumps
+
+    def test_long_straight_returns_to_the_middle(self):
+        g = build_geometry(HIGH_SPEED_CIRCUIT)  # Monza: 1.2 km main straight first
+        line = build_racing_line(g)
+        middle = (g.distance_m > 450) & (g.distance_m < 750)
+        self.assertLess(np.abs(line.offset_m[middle]).max(), 1.0)
+
+    def test_corner_entry_is_on_the_outside(self):
+        # A lone left-hand hairpin between long straights: approach on the right (outside), apex on the left.
+        track = Track("hairpin", (Segment(600), Segment(math.pi * 20, 20), Segment(600), Segment(math.pi * 20, 20)), width_m=14)
+        g = build_geometry(track, 2.0)
+        line = build_racing_line(g)
+        apex = np.argmin(np.abs(g.distance_m - (600 + math.pi * 10)))
+        entry = np.argmin(np.abs(g.distance_m - 590))
+        self.assertGreater(line.offset_m[apex], 4)   # inside of a left turn = left = positive
+        self.assertLess(line.offset_m[entry], -2)    # outside before the turn
+
+    def test_rejects_track_too_narrow(self):
+        with self.assertRaises(ValueError):
+            build_racing_line(build_geometry(Track("lane", (Segment(500, 80),) * 1, width_m=2.5)))
+
+
 class CameraTest(unittest.TestCase):
     def test_fit_keeps_points_inside_margins_with_uniform_scale(self):
         x, y = np.array([-100.0, 300.0]), np.array([50.0, 150.0])
@@ -122,6 +158,17 @@ class PlaybackTest(unittest.TestCase):
                 # Heading stays continuous across the finish line.
                 self.assertLess(np.max(np.abs(np.diff(pb.heading_rad))), 0.2)
 
+    def test_car_follows_the_racing_line(self):
+        track = HIGH_SPEED_CIRCUIT
+        g = build_geometry(track)
+        line = build_racing_line(g)
+        lap = simulate_lap(sports_car(), track, racing_line=line)
+        pb = LapPlayback.from_lap(lap, g)
+        self.assertAlmostEqual(pb.lap_time_s, lap.lap_time_s, places=9)
+        self.assertTrue(np.allclose(pb.x_m[:-1], line.x_m) and np.allclose(pb.y_m[:-1], line.y_m))
+        self.assertLess(np.max(np.abs(np.diff(pb.heading_rad))), 0.2)
+        self.assertAlmostEqual(pb.heading_rad[-1] - pb.heading_rad[0], g.total_turn_rad, places=6)
+
     def test_rejects_mismatched_track_and_bad_time(self):
         lap = simulate_lap(sports_car(), TECHNICAL_CIRCUIT)
         with self.assertRaises(ValueError):
@@ -137,10 +184,12 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((car.tire_friction, car.drag_coefficient), (1.4, 0.3))
         stored_only = VehicleConfig(
             tires=TireCompound(grip_coefficient=1.4, temperature_c=40, wear_fraction=0.8),
-            aero=AeroPackage(drag_coefficient=0.3, downforce_coefficient_m2=3.0),
+            aero=AeroPackage(drag_coefficient=0.3),
         )
-        self.assertEqual(stored_only.to_car(), car)
-        self.assertEqual(len(NOT_MODELED), 4)
+        self.assertEqual(stored_only.to_car(), car)  # temperature and wear change nothing
+        self.assertEqual(len(NOT_MODELED), 3)
+        winged = VehicleConfig(aero=AeroPackage(downforce_coefficient_m2=3.0)).to_car()
+        self.assertEqual(winged.downforce_coefficient_m2, 3.0)  # downforce is modelled now
 
     def test_invalid_config_rejected(self):
         for build in (
@@ -164,7 +213,7 @@ class SceneTest(unittest.TestCase):
         corner_runs = sum(not k and (i == 0 or kinds[i - 1]) for i, k in enumerate(kinds))  # back-to-back corners share a curb
         self.assertEqual(len(data["track"]["curbs"]), 2 * corner_runs)
         self.assertEqual(len(data["frames"]["t"]), len(pb.time_s))
-        self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "color": "#123456"})
+        self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "wing": "none", "color": "#123456"})
         html = track_view_html(geometry, pb)
         self.assertNotIn("__SCENE__", html)
         payload = html.split("const S = ", 1)[1].split(";\n", 1)[0]

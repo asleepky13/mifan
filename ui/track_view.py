@@ -107,7 +107,7 @@ def scene(
 
     ``car`` is ``{"body", "wheels", "engine", "color"}``: part keys and #RRGGBB.
     """
-    car = {"body": "kart", "wheels": "standard", "engine": "standard", "color": "#F2F2F2", **(car or {})}
+    car = {"body": "kart", "wheels": "standard", "engine": "standard", "wing": "none", "color": "#F2F2F2", **(car or {})}
     half = geometry.width_m / 2
     left, right = geometry.offset(half), geometry.offset(-half)
     camera = Camera.fit(np.concatenate((left[0], right[0])), np.concatenate((left[1], right[1])), VIEW_W, VIEW_H, 24)

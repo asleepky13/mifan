@@ -6,7 +6,8 @@ import numpy as np
 
 from racelab.geometry import build_geometry
 from racelab.simulation import simulate_lap
-from racelab.telemetry import WHEELBASE_M, build_telemetry, lap_summary
+from racelab.summary import car_from_setup
+from racelab.telemetry import build_telemetry, lap_summary
 from racelab.track import CIRCUITS, WEATHER, Segment, Track
 from tests import sports_car
 from ui.telemetry_view import telemetry_html, telemetry_payload
@@ -41,10 +42,19 @@ class TelemetryTest(unittest.TestCase):
             track = Track("ring", (Segment(2 * math.pi * r, r, direction=direction),))
             t = telemetry_for(sports_car(), track)
             with self.subTest(direction=direction):
-                self.assertTrue(np.allclose(t.steering_deg, direction * math.degrees(math.atan(WHEELBASE_M / r))))
+                self.assertTrue(np.allclose(t.steering_deg, direction * math.degrees(math.atan(sports_car().wheelbase_m / r))))
                 # Constant speed around a ring: no braking, part throttle to hold speed against drag.
                 self.assertTrue(np.all(t.brake_pct == 0))
                 self.assertTrue(np.all((t.throttle_pct > 0) & (t.throttle_pct < 100)))
+
+    def test_gear_channel_follows_speed(self):
+        car = car_from_setup(1200, 400, 0.32, 2.2, 1.2, 10)
+        t = telemetry_for(car, CIRCUITS[0])
+        self.assertEqual(set(np.unique(t.gear)) - set(range(1, 7)), set())
+        order = np.argsort(t.speed_mps)
+        self.assertTrue(np.all(np.diff(t.gear[order]) >= 0))  # faster never means a lower gear
+        self.assertGreaterEqual(t.gear.max() - t.gear.min(), 3)
+        self.assertTrue(np.all(telemetry_for(sports_car(), CIRCUITS[0]).gear == 0))  # no gearbox, no gears
 
     def test_summary_is_consistent(self):
         t = telemetry_for(sports_car(), CIRCUITS[1])
