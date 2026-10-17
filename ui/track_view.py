@@ -11,6 +11,7 @@ import numpy as np
 from racelab.config import BodyPackage
 from racelab.geometry import Camera, TrackGeometry
 from racelab.playback import LapPlayback
+from racelab.track import WEATHER, Weather
 
 VIEW_W, VIEW_H = 1000, 640
 CURB_WIDTH_M = 1.2
@@ -28,7 +29,7 @@ def _corner_runs(geometry: TrackGeometry) -> list[np.ndarray]:
     return [np.arange(a, b + 1) % len(in_corner) for a, b in zip(edges[::2], edges[1::2])]
 
 
-def scene(geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage) -> dict:
+def scene(geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage, weather: Weather = WEATHER[0]) -> dict:
     """Everything the canvas needs, in world metres, plus the overview camera."""
     half = geometry.width_m / 2
     left, right = geometry.offset(half), geometry.offset(-half)
@@ -53,6 +54,7 @@ def scene(geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage) -> 
             "curb_width": CURB_WIDTH_M,
             "start": {"x": float(geometry.x_m[0]), "y": float(geometry.y_m[0]), "h": float(geometry.heading_rad[0])},
         },
+        "weather": {"name": weather.name, "rain": weather.rain_intensity},
         "body": {"color": body.color_hex, "length": body.length_m, "width": body.width_m},
         "lap_time": playback.lap_time_s,
         "frames": {
@@ -65,6 +67,8 @@ def scene(geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage) -> 
     }
 
 
-def track_view_html(geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage) -> str:
-    payload = json.dumps(scene(geometry, playback, body)).replace("</", "<\\/")
+def track_view_html(
+    geometry: TrackGeometry, playback: LapPlayback, body: BodyPackage, weather: Weather = WEATHER[0]
+) -> str:
+    payload = json.dumps(scene(geometry, playback, body, weather)).replace("</", "<\\/")
     return _TEMPLATE.read_text(encoding="utf-8").replace("__SCENE__", payload)

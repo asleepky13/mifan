@@ -8,11 +8,11 @@ from racelab.config import NOT_MODELED, AeroPackage, BodyPackage, TireCompound, 
 from racelab.geometry import Camera, build_geometry
 from racelab.playback import LapPlayback
 from racelab.simulation import simulate_lap
-from racelab.track import HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, Segment, Track
+from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
 from tests import sports_car
 from ui.track_view import scene, track_view_html
 
-TRACKS = (TECHNICAL_CIRCUIT, HIGH_SPEED_CIRCUIT)
+TRACKS = CIRCUITS
 
 
 class GeometryTest(unittest.TestCase):
@@ -27,6 +27,13 @@ class GeometryTest(unittest.TestCase):
                 gaps = np.hypot(np.diff(g.x_m), np.diff(g.y_m))
                 self.assertTrue(np.all(gaps <= g.step_m + 1e-9))
                 self.assertGreater(gaps.min(), 0.9 * g.step_m)
+
+    def test_circuits_are_distinct_and_near_real_lengths(self):
+        real_km = {"Monza": 5.793, "Monaco": 3.337, "Spa": 7.004}
+        self.assertEqual(len({t.name for t in CIRCUITS}), len(CIRCUITS))
+        for track in CIRCUITS:
+            km = next(v for k, v in real_km.items() if track.name.startswith(k))
+            self.assertAlmostEqual(track.total_length_m / 1000, km, delta=0.01)
 
     def test_circle_is_exact(self):
         for direction in (1, -1):
@@ -151,9 +158,11 @@ class SceneTest(unittest.TestCase):
         track = TECHNICAL_CIRCUIT
         geometry = build_geometry(track)
         pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-        data = scene(geometry, pb, BodyPackage(color_hex="#123456"))
-        corners = sum(not s.is_straight for s in track.segments)
-        self.assertEqual(len(data["track"]["curbs"]), 2 * corners)
+        data = scene(geometry, pb, BodyPackage(color_hex="#123456"), WEATHER[-1])
+        self.assertEqual(data["weather"], {"name": "Heavy rain", "rain": 1.0})
+        kinds = [s.is_straight for s in track.segments]
+        corner_runs = sum(not k and (i == 0 or kinds[i - 1]) for i, k in enumerate(kinds))  # back-to-back corners share a curb
+        self.assertEqual(len(data["track"]["curbs"]), 2 * corner_runs)
         self.assertEqual(len(data["frames"]["t"]), len(pb.time_s))
         self.assertEqual(data["body"]["color"], "#123456")
         html = track_view_html(geometry, pb, BodyPackage())

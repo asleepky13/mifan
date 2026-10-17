@@ -6,7 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from racelab import HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, simulate_lap
+from racelab import CIRCUITS, WEATHER, simulate_lap
 from racelab.config import BodyPackage
 from racelab.geometry import build_geometry
 from racelab.playback import LapPlayback
@@ -29,7 +29,8 @@ SLIDERS = {
     "max_braking_decel_mps2": ("Max braking", "m/s²", 5.0, 15.0, 10.0, 0.5, "%.1f"),
 }
 DEFAULTS = {key: spec[4] for key, spec in SLIDERS.items()}
-TRACKS = {t.name: t for t in (TECHNICAL_CIRCUIT, HIGH_SPEED_CIRCUIT)}
+TRACKS = {t.name: t for t in CIRCUITS}
+WEATHERS = {w.name: w for w in WEATHER}
 KMH = 3.6
 
 CSS = """
@@ -77,9 +78,9 @@ h2.rl-h2 { font-family:var(--display) !important; font-size:2.5rem !important; l
 
 
 @st.cache_data(max_entries=256, show_spinner=False)
-def run(setup: tuple[tuple[str, float], ...], track_name: str):
+def run(setup: tuple[tuple[str, float], ...], track_name: str, weather_name: str):
     car = car_from_setup(**dict(setup))
-    lap = simulate_lap(car, TRACKS[track_name], step_m=2.0)
+    lap = simulate_lap(car, TRACKS[track_name].in_weather(WEATHERS[weather_name]), step_m=2.0)
     return lap, time_to_speed(car), corner_average_speed_mps(lap)
 
 
@@ -117,6 +118,7 @@ for key, value in DEFAULTS.items():
 with st.sidebar:
     st.markdown('<div class="rl-kicker">Car setup</div>', unsafe_allow_html=True)
     track_name = st.selectbox("Circuit", list(TRACKS))
+    weather_name = st.selectbox("Weather", list(WEATHERS))
     for key, (label, unit, lo, hi, _, step, number_format) in SLIDERS.items():
         st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
     st.button("Reset to default →", on_click=reset)
@@ -124,14 +126,14 @@ with st.sidebar:
 
 setup = {key: st.session_state[key] for key in SLIDERS}
 try:
-    lap, zero_to_100, corner = run(tuple(setup.items()), track_name)
-    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), track_name)
+    lap, zero_to_100, corner = run(tuple(setup.items()), track_name, weather_name)
+    base_lap, base_zero_to_100, base_corner = run(tuple(DEFAULTS.items()), track_name, weather_name)
 except (ValueError, ArithmeticError) as exc:
     notice(f"<strong>Simulation failed for this setup.</strong> {exc}")
     st.stop()
 
 st.markdown(
-    f'<div class="rl-kicker">RaceLab V2 · {track_name} · {lap.total_distance_m / 1000:.2f} km</div>'
+    f'<div class="rl-kicker">RaceLab V2 · {track_name} · {lap.total_distance_m / 1000:.2f} km · {weather_name}</div>'
     '<h1 class="rl-hero">Race<em>Lab</em></h1><div class="rl-rule"><span></span></div>',
     unsafe_allow_html=True,
 )
@@ -152,9 +154,11 @@ st.markdown(
 st.markdown('<h2 class="rl-h2">On track</h2>', unsafe_allow_html=True)
 track_geometry = geometry(track_name)
 # Trusted HTML: built here from engine output, no user-supplied markup.
-st.iframe(track_view_html(track_geometry, LapPlayback.from_lap(lap, track_geometry), BodyPackage(color_hex=body_color)), height=840)
+st.iframe(track_view_html(track_geometry, LapPlayback.from_lap(lap, track_geometry), BodyPackage(color_hex=body_color), WEATHERS[weather_name]), height=840)
 st.markdown(
-    "<p class='rl-note'>The car follows the track centerline at the simulated speed: the engine is a point mass, "
+    "<p class='rl-note'>Circuits are simplified layouts inspired by the real tracks: corner order and lap length "
+    "follow the originals, exact shapes do not. Weather scales track grip (Dry 100%, Damp 85%, Wet 70%, Heavy rain 55%); "
+    "these factors are illustrative. The car follows the track centerline at the simulated speed: the engine is a point mass, "
     "so there is no racing line, slip or yaw. Every lap is the same flying lap. In the overview the car is drawn "
     "larger than scale so it stays visible.</p>",
     unsafe_allow_html=True,

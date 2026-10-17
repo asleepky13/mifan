@@ -19,6 +19,8 @@ streamlit run app.py
 
 A browser tab opens at http://localhost:8501. The sidebar holds the circuit and car sliders. The main area shows lap time, top speed, average speed, average corner speed and 0–100 km/h time against the default setup, plus a speed-versus-distance chart and the setup table. Every number comes from the engine below. `racelab/summary.py` converts horsepower to watts and computes 0–100 km/h by integrating `dt = dv / a(v)` with the engine's `net_acceleration`. Drivetrain efficiency (88%) and maximum tractive force (12 kN) are fixed in the UI.
 
+**Circuits and weather.** The sidebar picks Monza, Monaco or Spa and a weather preset. Weather scales track grip, so cornering speeds and braking distances drop in the wet; the track view darkens the asphalt and draws rain. The grip factors are illustrative, not calibrated.
+
 **On track (V2).** A top-down view of the circuit with asphalt, grass, curbs and the chequered start/finish line. The car moves at the simulated speed. The view has Start, Pause and Reset controls, a sim-speed selector (0.25×–8×), an Overview or Follow-car camera, and a readout of speed, lap, lap time, last lap and status. The body colour comes from the sidebar picker.
 
 How it fits together:
@@ -32,6 +34,7 @@ The view runs inside the existing Streamlit app instead of a separate Pygame win
 - The car follows the centerline exactly, because the engine is a point mass: no racing line, slip, yaw or steering.
 - Every lap is the same flying lap.
 - In the overview the car is drawn larger than scale so it stays visible. In Follow mode it is true to scale.
+- Weather only changes grip: no aquaplaning, drying line, tire choice or temperature effects.
 
 ## Usage
 
@@ -61,7 +64,7 @@ for name, s in sensitivity_analysis(car, TECHNICAL_CIRCUIT).items():
 | Module | Contents |
 |---|---|
 | `racelab/car.py` | `Car` dataclass with validation. Build variants with `dataclasses.replace`. |
-| `racelab/track.py` | `Segment` (`radius_m=None` is a straight; `direction` +1 is a left corner, −1 a right corner), `Track` (a closed loop with `width_m`), and the fictional circuits `TECHNICAL_CIRCUIT` (1.23 km, 10 m wide, radii 20–40 m) and `HIGH_SPEED_CIRCUIT` (5.51 km, 14 m wide, radii 90–400 m). |
+| `racelab/track.py` | `Segment` (`radius_m=None` is a straight; `direction` +1 is a left corner, −1 a right corner), `Track` (a closed loop with `width_m`; `in_weather(w)` scales every segment's grip). Circuits in `CIRCUITS`: `MONZA` (5.79 km), `MONACO` (3.34 km) and `SPA` (7.00 km), simplified layouts inspired by the real F1 tracks, with their real corner order, turn directions and lap length; exact shapes and elevation are not reproduced. `TECHNICAL_CIRCUIT` (Monaco) and `HIGH_SPEED_CIRCUIT` (Monza) remain as aliases. `WEATHER`: Dry, Damp, Wet and Heavy rain, scaling grip to 100%, 85%, 70% and 55%. |
 | `racelab/geometry.py` | `build_geometry` → `TrackGeometry` (centerline x/y, heading, signed curvature, `pose_at`, `offset`, closure error); `Camera` (fit-to-view and chase camera, world to screen and back). |
 | `racelab/playback.py` | `LapPlayback.from_lap(lap, geometry)`; `state_at(t)` → `VehicleState` (lap, lap time, distance, x, y, heading, speed). |
 | `racelab/config.py` | Future-facing configuration: `TireCompound`, `AeroPackage`, `BodyPackage`, `VehicleConfig.to_car()`. Fields listed in `NOT_MODELED` (tire temperature and wear, downforce) are stored but have **no effect** yet. |
@@ -108,4 +111,4 @@ Parameters: `mass`, `power`, `drag_coefficient`, `frontal_area`, `grip` (tire fr
 - No rolling resistance, gradient or wind. Drag is ignored under braking, which makes braking distances slightly conservative.
 - Flying lap: the car crosses the start line at the speed it carries from the previous lap.
 - Explicit Euler in `v²`. Lap times change by less than 1% between 0.5 m and 5 m steps on the bundled circuits.
-- Track geometry is lines and constant-radius arcs, with no transition curves. Both bundled tracks close to within 0.1 m and are checked by tests.
+- Track geometry is lines and constant-radius arcs, with no transition curves and no elevation. All bundled circuits close to within 0.1 m and are checked by tests.
