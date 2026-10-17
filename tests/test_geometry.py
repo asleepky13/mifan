@@ -10,7 +10,7 @@ from racelab.playback import LapPlayback
 from racelab.simulation import simulate_lap
 from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
 from tests import sports_car
-from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, scene, track_view_html
+from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, inside_loop, scene, track_view_html
 
 TRACKS = CIRCUITS
 
@@ -175,10 +175,11 @@ class SceneTest(unittest.TestCase):
         for track in CIRCUITS:
             geometry = build_geometry(track)
             pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-            data = scene(geometry, pb, first_straight_m=track.segments[0].length_m)
+            data = scene(geometry, pb, first_straight_m=track.segments[0].length_m, environment=track.environment)
             trees = data["scenery"]["trees"]
             with self.subTest(track=track.name):
-                self.assertGreater(len(trees["x"]), 50)
+                self.assertEqual(data["environment"], track.environment)
+                self.assertGreater(len(trees["x"]), 30)
                 d = distance_to_track(geometry, np.array(trees["x"]), np.array(trees["y"]))
                 self.assertTrue(np.all(d > geometry.width_m / 2 + CURB_WIDTH_M + RUNOFF_WIDTH_M + TREE_CLEARANCE_M - 0.01))
                 self.assertTrue(data["track"]["armco"])
@@ -186,10 +187,31 @@ class SceneTest(unittest.TestCase):
                 for b in data["scenery"]["buildings"]:
                     self.assertTrue(np.all(distance_to_track(geometry, np.array(b["x"]), np.array(b["y"])) > geometry.width_m / 2))
                 runoff = data["track"]["runoff"]
-                self.assertTrue(any(r["gravel"] for r in runoff))
+                self.assertEqual(any(r["gravel"] for r in runoff), track.environment != "desert")  # Sakhir: tarmac run-off
                 # Monza's Curva Grande (r ~350 m) is fast, so not every corner gets gravel.
                 if track.name.startswith("Monza"):
                     self.assertFalse(all(r["gravel"] for r in runoff))
+
+    def test_environments_change_the_scenery(self):
+        trees_per_km2, scenes = {}, {}
+        for track in CIRCUITS:
+            geometry = build_geometry(track)
+            pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
+            data = scenes[track.environment] = scene(geometry, pb, environment=track.environment)
+            x0, y0, x1, y1 = data["bounds"]
+            trees_per_km2[track.environment] = len(data["scenery"]["trees"]["x"]) / ((x1 - x0) * (y1 - y0) / 1e6)
+        self.assertEqual(max(trees_per_km2, key=trees_per_km2.get), "forest")
+        self.assertEqual(min(trees_per_km2, key=trees_per_km2.get), "desert")
+        harbour = scenes["harbour"]["scenery"]
+        geometry = build_geometry(TECHNICAL_CIRCUIT)
+        self.assertGreater(len(harbour["blocks"]["x"]), 20)
+        self.assertGreater(len(harbour["yachts"]["x"]), 5)
+        self.assertTrue(inside_loop(geometry, np.array(harbour["yachts"]["x"]), np.array(harbour["yachts"]["y"])).all())
+        for kind in ("blocks", "trees"):
+            self.assertFalse(inside_loop(geometry, np.array(harbour[kind]["x"]), np.array(harbour[kind]["y"])).any())
+        self.assertEqual(scenes["parkland"]["scenery"]["blocks"], {})
+        with self.assertRaises(ValueError):
+            scene(geometry, LapPlayback.from_lap(simulate_lap(sports_car(), TECHNICAL_CIRCUIT), geometry), environment="lunar")
 
 
 if __name__ == "__main__":

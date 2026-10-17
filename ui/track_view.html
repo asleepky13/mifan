@@ -56,6 +56,15 @@ function path(p, close) {
   if (close) out.closePath();
   return out;
 }
+// Ground, verge and tree colours for each environment; wet darkens them.
+const THEME = {
+  parkland: { ground: '#3f7a36', stripe: '#47843d', verge: '#2f5f28', tree: '#24451f', crown: '#356b2b' },
+  forest: { ground: '#2c5426', stripe: null, verge: '#264a21', tree: '#132e14', crown: '#1f4a22' },
+  harbour: { ground: '#a3a19b', stripe: null, verge: '#8a8882', tree: '#2c5a2a', crown: '#3e7a36', water: '#2b6c99' },
+  desert: { ground: '#dcc28f', stripe: null, verge: '#c9ad78', tree: '#4f6b26', crown: '#7a9a38' },
+}[S.environment] || {};
+const shade = c => { if (!wet || !c) return c; const n = parseInt(c.slice(1), 16), f = 0.85;
+  return `rgb(${(n >> 16) * f | 0},${(n >> 8 & 255) * f | 0},${(n & 255) * f | 0})`; };
 const center = path(T.center, true), left = path(T.left, true), right = path(T.right, true);
 const curbs = T.curbs.map(c => path(c, false));
 const runoff = T.runoff.map(r => ({ gravel: r.gravel, mid: path(r.mid, false), wall: path(r.wall, false) }));
@@ -155,9 +164,30 @@ function drawCar(s, scale, running) {
 // ---- Track and surroundings ----
 function drawGround() {
   const [x0, y0, x1, y1] = S.bounds, band = 24;
-  ctx.fillStyle = wet ? '#365f2f' : '#3f7a36'; ctx.fillRect(x0 - 4000, y0 - 4000, x1 - x0 + 8000, y1 - y0 + 8000);
-  ctx.fillStyle = wet ? '#3a6633' : '#47843d';  // mown stripes
-  for (let x = x0; x < x1; x += 2 * band) ctx.fillRect(x, y0, band, y1 - y0);
+  ctx.fillStyle = shade(THEME.ground); ctx.fillRect(x0 - 4000, y0 - 4000, x1 - x0 + 8000, y1 - y0 + 8000);
+  if (THEME.stripe) {  // mown stripes
+    ctx.fillStyle = shade(THEME.stripe);
+    for (let x = x0; x < x1; x += 2 * band) ctx.fillRect(x, y0, band, y1 - y0);
+  }
+  if (THEME.water) { ctx.fillStyle = shade(THEME.water); ctx.fill(center); }  // harbour inside the loop
+}
+function drawHarbour() {
+  const B = S.scenery.blocks, Y = S.scenery.yachts, roofs = ['#c9b79c', '#d8cfc0', '#b8735a', '#e6e1d6'];
+  for (let i = 0; i < (B.x || []).length; i++) {
+    ctx.save(); ctx.translate(B.x[i], B.y[i]); ctx.rotate(B.a[i]);
+    rect(-B.w[i] / 2, -B.h[i] / 2, B.w[i], B.h[i], shade(roofs[i % roofs.length]));
+    ctx.lineWidth = 0.5; ctx.strokeStyle = '#6b6862'; ctx.strokeRect(-B.w[i] / 2, -B.h[i] / 2, B.w[i], B.h[i]);
+    ctx.restore();
+  }
+  for (let i = 0; i < (Y.x || []).length; i++) {
+    const l = Y.l[i], w = l * 0.28;
+    ctx.save(); ctx.translate(Y.x[i], Y.y[i]); ctx.rotate(Y.a[i]);
+    ctx.beginPath(); ctx.moveTo(l / 2, 0); ctx.quadraticCurveTo(l / 4, w / 2, -l / 2, w / 2); ctx.lineTo(-l / 2, -w / 2);
+    ctx.quadraticCurveTo(l / 4, -w / 2, l / 2, 0); ctx.fillStyle = '#f4f4f2'; ctx.fill();
+    ctx.lineWidth = 0.4; ctx.strokeStyle = '#7a8a96'; ctx.stroke();
+    rect(-l / 4, -w / 4, l / 3, w / 2, '#cfd6db');  // cabin
+    ctx.restore();
+  }
 }
 function drawBuildings() {
   for (const b of S.scenery.buildings) {
@@ -190,8 +220,9 @@ function draw(s, running) {
   }
   ctx.lineWidth = 0.5; ctx.strokeStyle = '#c9ccd1'; for (const a of armco) ctx.stroke(a);          // guardrail
   ctx.setLineDash([0.25, 3.75]); ctx.lineWidth = 1.0; ctx.strokeStyle = '#55595f'; for (const a of armco) ctx.stroke(a); ctx.setLineDash([]);  // posts
+  drawHarbour();
   drawBuildings();
-  ctx.strokeStyle = '#2f5f28'; ctx.lineWidth = T.width + 3; ctx.stroke(center);                      // track verge
+  ctx.strokeStyle = shade(THEME.verge); ctx.lineWidth = T.width + 3; ctx.stroke(center);                      // track verge
   ctx.strokeStyle = wet ? '#2b2e33' : '#3a3a3c'; ctx.lineWidth = T.width; ctx.stroke(center);        // asphalt, darker when wet
   ctx.lineWidth = T.curb_width;
   for (const c of curbs) {
@@ -203,7 +234,7 @@ function draw(s, running) {
   ctx.translate(T.start.x, T.start.y); ctx.rotate(T.start.h);
   for (let i = 0; i < 2; i++) for (let j = 0; j < Math.ceil(T.width); j++) rect(i - 1, j - T.width / 2, 1, Math.min(1, T.width - j), (i + j) % 2 ? '#000' : '#fff');
   ctx.restore();
-  ctx.fillStyle = '#24451f'; ctx.fill(trees); ctx.fillStyle = '#356b2b'; ctx.fill(crowns);
+  ctx.fillStyle = shade(THEME.tree); ctx.fill(trees); ctx.fillStyle = shade(THEME.crown); ctx.fill(crowns);
   drawCar(s, scale, running);
   drawRain();
 }

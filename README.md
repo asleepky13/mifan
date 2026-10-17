@@ -19,7 +19,21 @@ streamlit run app.py
 
 A browser tab opens at http://localhost:8501. The sidebar holds the circuit and car sliders. The main area shows lap time, top speed, average speed, average corner speed and 0–100 km/h time against the default setup, plus a speed-versus-distance chart and the setup table. Every number comes from the engine below. `racelab/summary.py` converts horsepower to watts and computes 0–100 km/h by integrating `dt = dv / a(v)` with the engine's `net_acceleration`. Drivetrain efficiency (88%) and maximum tractive force (12 kN) are fixed in the UI.
 
-**Circuits and weather.** The sidebar picks Monza, Monaco or Spa and a weather preset. Weather scales track grip, so cornering speeds and braking distances drop in the wet; the track view darkens the asphalt and draws rain. The grip factors are illustrative, not calibrated.
+**Circuits and weather.** The sidebar picks Monza, Monaco, Spa or Bahrain and a weather preset. Weather scales track grip, so cornering speeds and braking distances drop in the wet; the track view darkens the asphalt and draws rain. The grip factors are illustrative, not calibrated.
+
+**Environments.** Each circuit has its own surroundings in the track view, set by `Track.environment`:
+- Monza (parkland): mown grass and tree clusters.
+- Spa (forest): dense, dark Ardennes woodland.
+- Monaco (harbour): grey city ground with city blocks, and harbour water with moored yachts inside the loop.
+- Bahrain (desert): sand, sparse palms and tarmac run-off instead of gravel.
+
+**Tyres and pit stops.** Under *Race strategy* the sidebar picks the start tyres, the compound to pit for and the race length (1–60 laps). The flying lap above runs on fresh start tyres. The *Race* section shows the race time with pit stops, the number of stops and the laps they come after, the fastest lap, lap time per lap and tyre wear per lap. The model (`racelab/tires.py`):
+- Compounds scale grip: Soft ×1.08, Medium ×1.00, Hard ×0.93. Soft wears 1.8× faster than Medium; Hard lasts 1.7× longer.
+- Tyre work per lap = `Σ (|a_long| + v²·|κ|) · ds / g`, in g·km. Wear per lap = compound rate × tyre work, so tight circuits and fast cars wear tyres faster.
+- Grip falls linearly with wear: `μ = μ_car × compound × (1 − 0.15 × wear)`. Each lap is simulated with the grip at its start.
+- When wear reaches 80%, the car pits at the end of that lap. It loses 22 s and leaves on fresh tyres of the pit compound. There is no stop after the final lap.
+
+All rates and the pit loss are illustrative, not calibrated tyre data. There is no tyre temperature, no fuel load and no traffic.
 
 **Telemetry.** Stacked charts by distance: vehicle speed, throttle, brake, steering and delta time against the baseline (default setup), each comparing the current setup (blue) with the baseline (orange). A crosshair follows the pointer across every chart and the speed-coloured track map, with both laps' values at the cursor; the arrow keys move it too. A lap summary table lists the headline numbers for both laps. How the channels are derived:
 - Throttle is the drive force the lap needs (mass × acceleration + drag) as a share of what the engine and tyres can deliver at that speed.
@@ -42,7 +56,7 @@ The view runs inside the existing Streamlit app instead of a separate Pygame win
 - The car follows the centerline exactly, because the engine is a point mass: no racing line, slip, yaw or steering.
 - Every lap is the same flying lap.
 - In the overview the car is drawn larger than scale so it stays visible. In Follow mode it is true to scale.
-- Weather only changes grip: no aquaplaning, drying line, tire choice or temperature effects.
+- Weather only changes grip: no aquaplaning, drying line, wet-weather tyres or temperature effects.
 
 ## Usage
 
@@ -72,11 +86,12 @@ for name, s in sensitivity_analysis(car, TECHNICAL_CIRCUIT).items():
 | Module | Contents |
 |---|---|
 | `racelab/car.py` | `Car` dataclass with validation. Build variants with `dataclasses.replace`. |
-| `racelab/track.py` | `Segment` (`radius_m=None` is a straight; `direction` +1 is a left corner, −1 a right corner), `Track` (a closed loop with `width_m`; `in_weather(w)` scales every segment's grip). Circuits in `CIRCUITS`: `MONZA` (5.79 km), `MONACO` (3.34 km) and `SPA` (7.00 km), simplified layouts inspired by the real F1 tracks, with their real corner order, turn directions and lap length; exact shapes and elevation are not reproduced. `TECHNICAL_CIRCUIT` (Monaco) and `HIGH_SPEED_CIRCUIT` (Monza) remain as aliases. `WEATHER`: Dry, Damp, Wet and Heavy rain, scaling grip to 100%, 85%, 70% and 55%. |
+| `racelab/track.py` | `Segment` (`radius_m=None` is a straight; `direction` +1 is a left corner, −1 a right corner), `Track` (a closed loop with `width_m`; `in_weather(w)` scales every segment's grip). Circuits in `CIRCUITS`: `MONZA` (5.79 km), `MONACO` (3.34 km), `SPA` (7.00 km) and `BAHRAIN` (5.41 km), simplified layouts inspired by the real F1 tracks, with their real corner order, turn directions and lap length; exact shapes and elevation are not reproduced. Each track has an `environment` (one of `ENVIRONMENTS`: parkland, harbour, forest, desert) that the track view uses for scenery. `TECHNICAL_CIRCUIT` (Monaco) and `HIGH_SPEED_CIRCUIT` (Monza) remain as aliases. `WEATHER`: Dry, Damp, Wet and Heavy rain, scaling grip to 100%, 85%, 70% and 55%. |
 | `racelab/geometry.py` | `build_geometry` → `TrackGeometry` (centerline x/y, heading, signed curvature, `pose_at`, `offset`, closure error); `Camera` (fit-to-view and chase camera, world to screen and back). |
 | `racelab/playback.py` | `LapPlayback.from_lap(lap, geometry)`; `state_at(t)` → `VehicleState` (lap, lap time, distance, x, y, heading, speed). |
-| `racelab/config.py` | Future-facing configuration: `TireCompound`, `AeroPackage`, `BodyPackage`, `VehicleConfig.to_car()`. Fields listed in `NOT_MODELED` (tire temperature and wear, downforce) are stored but have **no effect** yet. |
+| `racelab/config.py` | Future-facing configuration: `TireCompound`, `AeroPackage`, `BodyPackage`, `VehicleConfig.to_car()`. Fields listed in `NOT_MODELED` (tire temperature and wear, downforce) are stored but have **no effect** yet. Tyre wear is modelled separately in `racelab/tires.py`. |
 | `racelab/parts.py` | Kart-style `PARTS` in three categories (body, wheels, engine). `apply_parts(car, parts)` adds mass and scales power, drag, frontal area, grip, braking and traction, so each part changes the simulated lap. The values are game-style balance, not measured data. |
+| `racelab/tires.py` | `COMPOUNDS` (Soft, Medium, Hard), `grip_factor(wear)`, `tyre_work_g_km(lap, geometry)`, `simulate_race(car, track, geometry, laps, start, pit_to)` → `RaceResult` (per-lap `RaceLap`s, `total_time_s`, `pit_stops`). |
 | `racelab/telemetry.py` | `build_telemetry(lap, car, track, geometry)` → `Telemetry`: speed, throttle %, brake %, kinematic steering angle, time and position per sample, derived from the lap; `lap_summary` → lap time, speeds, full-throttle and braking share, max steering. |
 | `ui/telemetry_view.py`, `ui/telemetry.html` | The telemetry dashboard. Rendering only, no physics. |
 | `ui/track_view.py`, `ui/track_view.html` | Renders the canvas view. Rendering only, no physics. |
@@ -115,7 +130,7 @@ Parameters: `mass`, `power`, `drag_coefficient`, `frontal_area`, `grip` (tire fr
 
 ## Assumptions and limitations
 
-- The car is a point mass: no weight transfer, suspension, tire load sensitivity, slip angles or tire temperature.
+- The car is a point mass: no weight transfer, suspension, tire load sensitivity, slip angles or tire temperature. Tyre wear only exists in race mode (`racelab/tires.py`), and grip is held constant within each lap.
 - No aerodynamic downforce, so grip does not increase with speed.
 - The engine is a flat power curve with a fixed tractive-force cap: no gears, torque curve, shift time or rev limit.
 - No friction circle: full cornering grip is never combined with full braking or acceleration. Corners are driven at their limit speed.

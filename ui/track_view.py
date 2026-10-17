@@ -10,7 +10,7 @@ import numpy as np
 
 from racelab.geometry import Camera, TrackGeometry
 from racelab.playback import LapPlayback
-from racelab.track import WEATHER, Weather
+from racelab.track import ENVIRONMENTS, WEATHER, Weather
 
 VIEW_W, VIEW_H = 1000, 640
 CURB_WIDTH_M = 1.2
@@ -20,6 +20,13 @@ ARMCO_OFFSET_M = 5.0  # guardrail distance beyond the track edge where there is 
 TREE_CLEARANCE_M = 6.0  # beyond the outermost barrier
 SCENERY_PAD_M = 220.0
 FOLLOW_SCALE_PX_PER_M = 16.0
+# Tree clusters per km², trees per cluster, cluster spread (m) and crown radius (m) for each environment.
+TREES = {
+    "parkland": (25, (4, 15), 22, (3, 7)),
+    "forest": (80, (10, 28), 30, (4, 8)),
+    "harbour": (12, (2, 6), 10, (2.5, 4)),
+    "desert": (10, (1, 4), 14, (2.5, 3.5)),  # palms
+}
 _TEMPLATE = Path(__file__).with_name("track_view.html")
 
 
@@ -41,7 +48,17 @@ def distance_to_track(geometry: TrackGeometry, x: np.ndarray, y: np.ndarray, ski
     return np.array([np.min(np.hypot(cx - px, cy - py)) for px, py in zip(x, y)])
 
 
-def _runoff(geometry: TrackGeometry) -> tuple[list[dict], list[dict]]:
+def inside_loop(geometry: TrackGeometry, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """True for points enclosed by the centerline (even-odd ray casting)."""
+    ax, ay = geometry.x_m[None], geometry.y_m[None]
+    bx, by = np.roll(ax, -1, axis=1), np.roll(ay, -1, axis=1)
+    px, py = np.asarray(x)[:, None], np.asarray(y)[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        crosses = ((ay > py) != (by > py)) & (px < ax + (bx - ax) * (py - ay) / (by - ay))
+    return crosses.sum(axis=1) % 2 == 1
+
+
+def _runoff(geometry: TrackGeometry, gravel_traps: bool = True) -> tuple[list[dict], list[dict]]:
     """Run-off areas outside corners, and guardrail runs along every stretch without run-off."""
     half, n = geometry.width_m / 2, len(geometry.x_m)
     covered = {1: np.zeros(n, bool), -1: np.zeros(n, bool)}
@@ -54,7 +71,7 @@ def _runoff(geometry: TrackGeometry) -> tuple[list[dict], list[dict]]:
             mid = geometry.offset(side * (half + CURB_WIDTH_M + RUNOFF_WIDTH_M / 2))
             wall = geometry.offset(side * (half + CURB_WIDTH_M + RUNOFF_WIDTH_M + 0.6))
             out.append({
-                "gravel": bool(np.abs(k).max() > 1 / GRAVEL_BELOW_RADIUS_M),
+                "gravel": gravel_traps and bool(np.abs(k).max() > 1 / GRAVEL_BELOW_RADIUS_M),
                 "mid": _xy(mid[0][span], mid[1][span]),
                 "wall": _xy(wall[0][span], wall[1][span]),
             })
@@ -85,15 +102,40 @@ def _buildings(geometry: TrackGeometry, first_straight_m: float) -> list[dict]:
     return out
 
 
-def _trees(geometry: TrackGeometry, seed: int) -> dict:
-    rng = np.random.default_rng(seed)
+def _bbox(geometry: TrackGeometry) -> tuple[np.ndarray, np.ndarray]:
     lo = np.array([geometry.x_m.min(), geometry.y_m.min()]) - SCENERY_PAD_M
     hi = np.array([geometry.x_m.max(), geometry.y_m.max()]) + SCENERY_PAD_M
-    clusters = rng.uniform(lo, hi, size=(int(np.prod(hi - lo) / 40_000) + 10, 2))
-    pts = np.concatenate([c + rng.normal(0, 22, size=(rng.integers(4, 15), 2)) for c in clusters])
+    return lo, hi
+
+
+def _trees(geometry: TrackGeometry, seed: int, environment: str = "parkland") -> dict:
+    per_km2, per_cluster, spread, radius = TREES[environment]
+    rng = np.random.default_rng(seed)
+    lo, hi = _bbox(geometry)
+    clusters = rng.uniform(lo, hi, size=(int(np.prod(hi - lo) * per_km2 / 1e6) + 10, 2))
+    pts = np.concatenate([c + rng.normal(0, spread, size=(rng.integers(*per_cluster), 2)) for c in clusters])
     clearance = geometry.width_m / 2 + CURB_WIDTH_M + RUNOFF_WIDTH_M + TREE_CLEARANCE_M
     pts = pts[distance_to_track(geometry, pts[:, 0], pts[:, 1]) > clearance]
-    return {**_xy(pts[:, 0], pts[:, 1]), "r": np.round(rng.uniform(3, 7, len(pts)), 1).tolist()}
+    if environment == "harbour":  # the loop's interior is water
+        pts = pts[~inside_loop(geometry, pts[:, 0], pts[:, 1])]
+    return {**_xy(pts[:, 0], pts[:, 1]), "r": np.round(rng.uniform(*radius, len(pts)), 1).tolist()}
+
+
+def _harbour(geometry: TrackGeometry, seed: int) -> tuple[dict, dict]:
+    """City blocks around the circuit and yachts moored in the water inside it."""
+    rng = np.random.default_rng(seed + 1)
+    lo, hi = _bbox(geometry)
+    pts = rng.uniform(lo, hi, size=(int(np.prod(hi - lo) / 6_000), 2))
+    size = rng.uniform(14, 40, size=(len(pts), 2))
+    d = distance_to_track(geometry, pts[:, 0], pts[:, 1])
+    inside = inside_loop(geometry, pts[:, 0], pts[:, 1])
+    keep = ~inside & (d > geometry.width_m / 2 + RUNOFF_WIDTH_M + size.max(axis=1) * 0.75)
+    blocks = {**_xy(pts[keep, 0], pts[keep, 1]), "w": np.round(size[keep, 0], 1).tolist(),
+              "h": np.round(size[keep, 1], 1).tolist(), "a": np.round(rng.uniform(0, np.pi, keep.sum()), 2).tolist()}
+    keep = inside & (d > geometry.width_m / 2 + 25)
+    yachts = {**_xy(pts[keep, 0], pts[keep, 1]), "l": np.round(size[keep, 0] * 0.8, 1).tolist(),
+              "a": np.round(rng.uniform(0, np.pi, keep.sum()), 2).tolist()}
+    return blocks, yachts
 
 
 def scene(
@@ -102,16 +144,22 @@ def scene(
     car: dict | None = None,
     weather: Weather = WEATHER[0],
     first_straight_m: float = 300.0,
+    environment: str = "parkland",
 ) -> dict:
     """Everything the canvas needs, in world metres, plus the overview camera.
 
     ``car`` is ``{"body", "wheels", "engine", "color"}``: part keys and #RRGGBB.
+    ``environment`` (one of ``ENVIRONMENTS``) picks the ground, trees and surroundings.
     """
+    if environment not in ENVIRONMENTS:
+        raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {environment!r}")
     car = {"body": "kart", "wheels": "standard", "engine": "standard", "color": "#F2F2F2", **(car or {})}
     half = geometry.width_m / 2
     left, right = geometry.offset(half), geometry.offset(-half)
     camera = Camera.fit(np.concatenate((left[0], right[0])), np.concatenate((left[1], right[1])), VIEW_W, VIEW_H, 24)
-    runoff, armco = _runoff(geometry)
+    runoff, armco = _runoff(geometry, gravel_traps=environment != "desert")  # Sakhir-style tarmac run-off
+    seed = sum(map(ord, geometry.track_name))
+    blocks, yachts = _harbour(geometry, seed) if environment == "harbour" else ({}, {})
     curb_offset = half + CURB_WIDTH_M / 2
     curbs = []
     for run in _corner_runs(geometry):
@@ -137,9 +185,12 @@ def scene(
             "runoff_width": RUNOFF_WIDTH_M,
             "start": {"x": float(geometry.x_m[0]), "y": float(geometry.y_m[0]), "h": float(geometry.heading_rad[0])},
         },
+        "environment": environment,
         "scenery": {
             "buildings": _buildings(geometry, first_straight_m),
-            "trees": _trees(geometry, seed=sum(map(ord, geometry.track_name))),
+            "trees": _trees(geometry, seed, environment),
+            "blocks": blocks,
+            "yachts": yachts,
         },
         "weather": {"name": weather.name, "rain": weather.rain_intensity},
         "car": car,
