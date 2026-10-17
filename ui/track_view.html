@@ -6,7 +6,7 @@
 <style>
   * { box-sizing: border-box; border-radius: 0; }
   body { margin: 0; font-family: 'JetBrains Mono', monospace; color: #000; background: #fff; }
-  .hud { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: #000; color: #fff; }
+  .hud { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); background: #000; color: #fff; }
   /* Fixed height, no wrapping: changing numbers can never resize the HUD and shift the map. */
   .hud div { height: 74px; padding: .65rem .8rem; border-right: 1px solid #333; overflow: hidden; }
   .hud span { display: block; font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: #BDBDBD; white-space: nowrap; }
@@ -20,7 +20,10 @@
   button:focus-visible, select:focus-visible { outline: 3px solid #000; outline-offset: 3px; }
   label { font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; margin-left: .5rem; }
   canvas { display: block; width: 100%; height: auto; border: 1px solid #000; }
-  @media (max-width: 640px) { .hud { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .tyre { height: 4px; background: #333; margin-top: .35rem; }
+  .tyre i { display: block; height: 100%; background: #fff; }
+  .tyre i.low { background: #ff5a36; }
+  @media (max-width: 640px) { .hud { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 </style>
 </head>
 <body>
@@ -29,6 +32,7 @@
   <div><span>Lap</span><b id="lap">1</b></div>
   <div><span>Lap time</span><b id="laptime">0.00</b></div>
   <div><span>Last lap</span><b id="last">—</b></div>
+  <div><span>Tyres</span><b id="tyres">100%</b><div class="tyre"><i id="tyrebar" style="width:100%"></i></div></div>
   <div><span>Status</span><b id="status">Ready</b></div>
   <div><span>Weather</span><b id="weather">—</b></div>
 </div>
@@ -75,13 +79,27 @@ for (let i = 0; i < Tr.x.length; i++) {
   const r = Tr.r[i] * 0.45; crowns.moveTo(Tr.x[i] - 1 + r, Tr.y[i] + 1); crowns.arc(Tr.x[i] - 1, Tr.y[i] + 1, r, 0, 2 * Math.PI);
 }
 
-// Linear interpolation between simulation samples; laps repeat (flying lap).
+// One set of tyres: its laps back to back, then the change at the line; the cycle repeats.
+// Linear interpolation between simulation samples.
+const L = S.laps, starts = [];
+let stintTime = 0;
+for (const l of L) { starts.push(stintTime); stintTime += l.time; }
+const cycle = stintTime + S.change_s, lastLap = L[L.length - 1];
 function stateAt(time) {
-  const lap = Math.floor(time / S.lap_time), t = time - lap * S.lap_time;
-  let lo = 0, hi = F.t.length - 1;
-  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (F.t[mid] <= t) lo = mid; else hi = mid; }
-  const f = (t - F.t[lo]) / (F.t[hi] - F.t[lo] || 1), mix = k => F[k][lo] + (F[k][hi] - F[k][lo]) * f;
-  return { lap: lap + 1, t, x: mix('x'), y: mix('y'), h: mix('h'), v: mix('v') };
+  const c = Math.floor(time / cycle), tc = time - c * cycle, done = c * L.length;
+  if (tc >= stintTime) {  // stopped at the line for new tyres
+    const n = F.x.length - 1;
+    return { lap: done + L.length, t: lastLap.time, x: F.x[n], y: F.y[n], h: F.h[n], v: 0, tyres: lastLap.d1,
+             last: lastLap.time, change: tc - stintTime };
+  }
+  let k = 0;
+  while (k + 1 < L.length && starts[k + 1] <= tc) k++;
+  const l = L[k], t = tc - starts[k];
+  let lo = 0, hi = l.t.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (l.t[mid] <= t) lo = mid; else hi = mid; }
+  const f = (t - l.t[lo]) / (l.t[hi] - l.t[lo] || 1), mix = a => a[lo] + (a[hi] - a[lo]) * f;
+  return { lap: done + k + 1, t, x: mix(F.x), y: mix(F.y), h: mix(F.h), v: mix(l.v), tyres: l.d0 + (l.d1 - l.d0) * t / l.time,
+           last: k > 0 ? L[k - 1].time : c > 0 ? lastLap.time : null, change: null };
 }
 
 // ---- Car parts (local frame: +x forward, +y left, metres) ----
@@ -158,6 +176,12 @@ function drawCar(s, scale, running) {
   drawEngine(body.L, body.W, running);
   drawWheels(body.L, body.W);
   drawBody(body.L, body.W);
+  if (s.change !== null) {  // tyre change: a crew member at each wheel
+    ctx.fillStyle = '#ff5a36'; ctx.strokeStyle = '#000'; ctx.lineWidth = 0.08;
+    for (const fx of [0.3, -0.3]) for (const side of [1, -1]) {
+      ctx.beginPath(); ctx.arc(fx * body.L, side * (body.W / 2 + 0.55), 0.32, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 
@@ -259,8 +283,11 @@ function hud(s, status) {
   $('speed').textContent = (s.v * 3.6).toFixed(0) + ' km/h';
   $('lap').textContent = s.lap;
   $('laptime').textContent = s.t.toFixed(2) + ' s';
-  $('last').textContent = s.lap > 1 ? S.lap_time.toFixed(2) + ' s' : '—';
-  $('status').textContent = status;
+  $('last').textContent = s.last === null ? '—' : s.last.toFixed(2) + ' s';
+  $('tyres').textContent = Math.round(s.tyres * 100) + '%';
+  $('tyrebar').style.width = (s.tyres * 100).toFixed(1) + '%';
+  $('tyrebar').className = s.tyres <= 0.3 ? 'low' : '';
+  $('status').textContent = s.change !== null && running ? `Tyre change ${Math.max(0, S.change_s - s.change).toFixed(1)} s` : status;
   $('weather').textContent = S.weather.name;
 }
 function frame(now) {

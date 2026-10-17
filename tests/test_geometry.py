@@ -8,6 +8,7 @@ from racelab.config import NOT_MODELED, AeroPackage, BodyPackage, TireCompound, 
 from racelab.geometry import Camera, build_geometry
 from racelab.playback import LapPlayback
 from racelab.simulation import simulate_lap
+from racelab.tires import tyre_stint
 from racelab.track import CIRCUITS, HIGH_SPEED_CIRCUIT, TECHNICAL_CIRCUIT, WEATHER, Segment, Track
 from tests import sports_car
 from ui.track_view import CURB_WIDTH_M, RUNOFF_WIDTH_M, TREE_CLEARANCE_M, distance_to_track, inside_loop, scene, track_view_html
@@ -157,15 +158,18 @@ class SceneTest(unittest.TestCase):
     def test_scene_payload_is_complete_and_safe(self):
         track = TECHNICAL_CIRCUIT
         geometry = build_geometry(track)
-        pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-        data = scene(geometry, pb, {"body": "bulldog", "color": "#123456"}, WEATHER[-1])
+        stint = tyre_stint(sports_car(), track)
+        data = scene(geometry, stint, {"body": "bulldog", "color": "#123456"}, WEATHER[-1])
         self.assertEqual(data["weather"], {"name": "Heavy rain", "rain": 1.0})
         kinds = [s.is_straight for s in track.segments]
         corner_runs = sum(not k and (i == 0 or kinds[i - 1]) for i, k in enumerate(kinds))  # back-to-back corners share a curb
         self.assertEqual(len(data["track"]["curbs"]), 2 * corner_runs)
-        self.assertEqual(len(data["frames"]["t"]), len(pb.time_s))
+        self.assertEqual([len(l["t"]) for l in data["laps"]], [len(data["frames"]["x"])] * len(stint.laps))
+        self.assertEqual(data["laps"][0]["v"][0], 0.0)    # standing start on new tyres
+        self.assertEqual(data["laps"][-1]["v"][-1], 0.0)  # stops at the line for the change
+        self.assertEqual(data["change_s"], stint.change_s)
         self.assertEqual(data["car"], {"body": "bulldog", "wheels": "standard", "engine": "standard", "color": "#123456"})
-        html = track_view_html(geometry, pb)
+        html = track_view_html(geometry, stint)
         self.assertNotIn("__SCENE__", html)
         payload = html.split("const S = ", 1)[1].split(";\n", 1)[0]
         self.assertEqual(json.loads(payload)["track"]["name"], track.name)
@@ -174,8 +178,8 @@ class SceneTest(unittest.TestCase):
     def test_scenery_stays_off_the_track(self):
         for track in CIRCUITS:
             geometry = build_geometry(track)
-            pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-            data = scene(geometry, pb, first_straight_m=track.segments[0].length_m, environment=track.environment)
+            stint = tyre_stint(sports_car(), track)
+            data = scene(geometry, stint, first_straight_m=track.segments[0].length_m, environment=track.environment)
             trees = data["scenery"]["trees"]
             with self.subTest(track=track.name):
                 self.assertEqual(data["environment"], track.environment)
@@ -196,8 +200,8 @@ class SceneTest(unittest.TestCase):
         trees_per_km2, scenes = {}, {}
         for track in CIRCUITS:
             geometry = build_geometry(track)
-            pb = LapPlayback.from_lap(simulate_lap(sports_car(), track), geometry)
-            data = scenes[track.environment] = scene(geometry, pb, environment=track.environment)
+            stint = tyre_stint(sports_car(), track)
+            data = scenes[track.environment] = scene(geometry, stint, environment=track.environment)
             x0, y0, x1, y1 = data["bounds"]
             trees_per_km2[track.environment] = len(data["scenery"]["trees"]["x"]) / ((x1 - x0) * (y1 - y0) / 1e6)
         self.assertEqual(max(trees_per_km2, key=trees_per_km2.get), "forest")
@@ -211,7 +215,7 @@ class SceneTest(unittest.TestCase):
             self.assertFalse(inside_loop(geometry, np.array(harbour[kind]["x"]), np.array(harbour[kind]["y"])).any())
         self.assertEqual(scenes["parkland"]["scenery"]["blocks"], {})
         with self.assertRaises(ValueError):
-            scene(geometry, LapPlayback.from_lap(simulate_lap(sports_car(), TECHNICAL_CIRCUIT), geometry), environment="lunar")
+            scene(geometry, tyre_stint(sports_car(), TECHNICAL_CIRCUIT), environment="lunar")
 
 
 if __name__ == "__main__":

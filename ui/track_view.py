@@ -1,5 +1,5 @@
-"""Builds the self-contained HTML canvas view of a lap. Rendering only: all
-positions come from ``racelab.geometry`` and ``racelab.playback``."""
+"""Builds the self-contained HTML canvas view of a run on one set of tyres.
+Rendering only: all positions come from ``racelab.geometry`` and ``racelab.playback``."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import numpy as np
 
 from racelab.geometry import Camera, TrackGeometry
 from racelab.playback import LapPlayback
+from racelab.tires import TyreStint
 from racelab.track import ENVIRONMENTS, WEATHER, Weather
 
 VIEW_W, VIEW_H = 1000, 640
@@ -140,7 +141,7 @@ def _harbour(geometry: TrackGeometry, seed: int) -> tuple[dict, dict]:
 
 def scene(
     geometry: TrackGeometry,
-    playback: LapPlayback,
+    stint: TyreStint,
     car: dict | None = None,
     weather: Weather = WEATHER[0],
     first_straight_m: float = 300.0,
@@ -148,12 +149,16 @@ def scene(
 ) -> dict:
     """Everything the canvas needs, in world metres, plus the overview camera.
 
+    The view plays ``stint`` on a loop: its laps, then the tyre change at the line.
+    Every lap drives the same path, so positions are sent once and each lap adds its times and speeds.
+
     ``car`` is ``{"body", "wheels", "engine", "color"}``: part keys and #RRGGBB.
     ``environment`` (one of ``ENVIRONMENTS``) picks the ground, trees and surroundings.
     """
     if environment not in ENVIRONMENTS:
         raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {environment!r}")
     car = {"body": "kart", "wheels": "standard", "engine": "standard", "color": "#F2F2F2", **(car or {})}
+    playbacks = [LapPlayback.from_lap(l.result, geometry) for l in stint.laps]
     half = geometry.width_m / 2
     left, right = geometry.offset(half), geometry.offset(-half)
     camera = Camera.fit(np.concatenate((left[0], right[0])), np.concatenate((left[1], right[1])), VIEW_W, VIEW_H, 24)
@@ -194,14 +199,17 @@ def scene(
         },
         "weather": {"name": weather.name, "rain": weather.rain_intensity},
         "car": car,
-        "lap_time": playback.lap_time_s,
+        "change_s": stint.change_s,
         "frames": {
-            "t": np.round(playback.time_s, 4).tolist(),
-            "x": np.round(playback.x_m, 3).tolist(),
-            "y": np.round(playback.y_m, 3).tolist(),
-            "h": np.round(playback.heading_rad, 5).tolist(),
-            "v": np.round(playback.speed_mps, 3).tolist(),
+            "x": np.round(playbacks[0].x_m, 3).tolist(),
+            "y": np.round(playbacks[0].y_m, 3).tolist(),
+            "h": np.round(playbacks[0].heading_rad, 5).tolist(),
         },
+        "laps": [
+            {"time": pb.lap_time_s, "d0": round(l.durability_start, 4), "d1": round(l.durability_end, 4),
+             "t": np.round(pb.time_s, 4).tolist(), "v": np.round(pb.speed_mps, 3).tolist()}
+            for pb, l in zip(playbacks, stint.laps)
+        ],
     }
 
 

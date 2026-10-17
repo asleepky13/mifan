@@ -33,19 +33,10 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(at.selectbox(key="part_engine").value, "standard")
         self.assertEqual(lap_time(at), default)
 
-    def test_race_strategy_pits_and_reset_restores_it(self):
+    def test_tyre_life_is_shown(self):
         at = AppTest.from_file("../app.py", default_timeout=60).run()
-        race = lambda: next(m.value for m in at.markdown if "Pit stops" in m.value)
-        self.assertIn("After lap", race())  # 20 laps on Mediums needs a stop
-        default = lap_time(at)
-        at.selectbox(key="start_compound").set_value("Soft").run()
-        self.assertFalse(at.exception)
-        self.assertLess(float(lap_time(at)), float(default))  # more grip on fresh softs
-        at.slider(key="race_laps").set_value(3).run()
-        self.assertIn("No stop needed", race())
-        at.button[0].click().run()
-        self.assertEqual((at.selectbox(key="start_compound").value, at.slider(key="race_laps").value), ("Medium", 20))
-        self.assertEqual(lap_time(at), default)
+        stats = next(m.value for m in at.markdown if m.value.startswith('<div class="rl-stats">'))
+        self.assertRegex(stats, r"Tyre life · laps per set</div><div class=\"rl-value\">\d+<")
 
     def test_every_slider_extreme_renders(self):
         at = AppTest.from_file("../app.py", default_timeout=30).run()
