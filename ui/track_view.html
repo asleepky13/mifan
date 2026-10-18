@@ -366,10 +366,19 @@ function hud(s, status) {
   $('status').textContent = s.change !== null && running ? `Tyre change ${Math.max(0, S.change_s - s.change).toFixed(1)} s` : status;
   $('weather').textContent = S.weather.name;
 }
+// Live readout for the Arduino controller's LCD (only when the app passes hud_url), 5 per second.
+let hudSentAt = 0;
+function postHud(s) {
+  if (!S.hud_url || performance.now() - hudSentAt < 200) return;
+  hudSentAt = performance.now();
+  const body = JSON.stringify({ speed: Math.round(s.v * 3.6), lap: s.lap, tyres: s.tyres, tyre: S.car.tyre, status: $('status').textContent });
+  fetch(S.hud_url, { method: 'POST', mode: 'no-cors', body }).catch(() => {});
+}
 function frame(now) {
-  if (running) { simTime += (now - last) / 1000 * parseFloat($('mult').value); last = now; }
+  if (running) { simTime = Math.max(0, simTime + (now - last) / 1000 * parseFloat($('mult').value)); last = now; }  // rAF time can trail the click
   const s = stateAt(simTime);
   draw(s, running); hud(s, running ? 'Running' : simTime > 0 ? 'Paused' : 'Ready');
+  if (running) postHud(s);
   if (running) requestAnimationFrame(frame);
 }
 $('start').onclick = () => { if (!running) { running = true; last = performance.now(); requestAnimationFrame(frame); } };

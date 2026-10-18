@@ -73,6 +73,38 @@ The stats band shows how many laps a set lasts. The model (`racelab/tires.py`):
 - Tyre work per lap = `Σ (|a_long| + v²·|κ|) · ds / g`, in g·km, along the path driven. Durability used per lap = the tyre's wear rate × tyre work, so tight circuits and fast cars use tyres up faster.
 - Wear is counted on the flying version of each lap. The standing start and the stop only change the speed profile.
 
+**Arduino controller.** A hardware panel can tune every setup slider and show live telemetry. It uses a 16×2 I2C LCD and a joystick with a push button, and the sketch is in `arduino/racelab_controller/`.
+
+Wiring (Arduino Uno):
+
+| Part | Pin |
+|---|---|
+| Joystick X / Y | A0 / A1 |
+| Joystick button (SW) | D2, to GND when pressed |
+| LCD backpack SDA / SCL | A4 / A5, I2C address 0x27 (change it in the sketch to 0x3F if the screen stays blank) |
+
+Setup:
+1. Install the *LiquidCrystal I2C* library (Frank de Brabander) in the Arduino IDE and upload the sketch.
+2. Close the IDE's Serial Monitor, because only one program can hold the port.
+3. Enter the port (`/dev/ttyACM0`, `/dev/cu.usbmodem…` or `COM3`) under *Controller* in the sidebar, or start the app with `RACELAB_SERIAL_PORT=/dev/ttyACM0 streamlit run app.py`.
+
+Controls:
+- **Button:** switches between RACE and TUNE.
+- **RACE:** the LCD shows live speed, lap and tyre durability while the track view runs. Paused, it shows the lap time and laps per set of tyres.
+- **TUNE:** the joystick up or down picks one of the six setup sliders (mass, power, Cd, frontal area, tyre grip, braking). Left or right changes it one slider step, and the sidebar slider and every result follow.
+- **Holding left or right** repeats after 0.4 s. After 1.5 s each repeat moves 5 steps, so long ranges like mass are quick to cross.
+
+How it fits together:
+- The board only reads inputs and draws text. `ui/controller.py` holds the mode, the selected setting and the values.
+- Arduino → PC every 20 ms: `joy_x,joy_y,button` (0–1023; the button reads 0 while pressed).
+- PC → Arduino: `L|line 1|line 2`, 16 characters per line. Bytes 1–5 draw the bar glyphs.
+- The track view posts its HUD to `http://127.0.0.1:8765/hud` (set `RACELAB_HUD_PORT` to change the port), and the controller forwards it to the LCD.
+
+Limits:
+- The app must run on the computer the Arduino is plugged into.
+- One panel drives one app process. With several browser tabs open, a change goes to whichever tab reads it first.
+- The sketch has been compile-checked against stubs of the Arduino API. The full loop was tested against a simulated board on a virtual serial port, not on physical hardware.
+
 **Telemetry.** Stacked charts by distance: vehicle speed, throttle, brake, steering and delta time against the baseline (default setup), each comparing the current setup (blue) with the baseline (orange). A crosshair follows the pointer across every chart and the speed-coloured track map, with both laps' values at the cursor; the arrow keys move it too. A lap summary table lists the headline numbers for both laps. How the channels are derived:
 - Throttle is the drive force the lap needs (mass × acceleration + drag) as a share of what the engine and tyres can deliver at that speed.
 - Brake is the braking force needed as a share of the braking limit.
@@ -131,6 +163,7 @@ for name, s in sensitivity_analysis(car, TECHNICAL_CIRCUIT).items():
 | `racelab/tires.py` | `Tyre` (name, sidewall colour, dry grip, water grip loss, wear rate; `grip(weather)`), `TYRES` (`SOFT`, `MEDIUM`, `HARD`, `INTERMEDIATE`, `WET`), `grip_factor(durability)`, `tyre_work_g_km(lap)`, `tyre_stint(car, track, tyre, weather, racing_line=...)` → `TyreStint` (per-lap `StintLap`s with durability and the driven `LapResult`, `change_s`, `cycle_time_s`). |
 | `racelab/telemetry.py` | `build_telemetry(lap, car, track, geometry)` → `Telemetry`: speed, throttle %, brake %, kinematic steering angle, time and position per sample, derived from the lap; `lap_summary` → lap time, speeds, full-throttle and braking share, max steering. |
 | `ui/telemetry_view.py`, `ui/telemetry.html` | The telemetry dashboard. Rendering only, no physics. |
+| `ui/controller.py`, `arduino/racelab_controller/` | Arduino controller: input parsing, joystick stepping with auto-repeat, LCD text (`Controller`), the serial thread (`ArduinoLink`), the local HUD endpoint (`HudServer`), and the sketch. |
 | `ui/track_view.py`, `ui/track_view.html` | Renders the canvas view. Rendering only, no physics. |
 | `racelab/physics.py` | Drag, drive force, net acceleration, braking, cornering speed and a top-speed bound. |
 | `racelab/simulation.py` | `simulate_lap(car, track, racing_line=None, standing_start=False, stop_at_finish=False)` → `LapResult`. |
