@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
 import streamlit as st
@@ -19,6 +20,7 @@ from racelab.summary import (
     corner_average_speed_mps,
     time_to_speed,
 )
+from ui.controller import ArduinoLink, Controller, HudServer, Setting
 from ui.telemetry_view import telemetry_html
 from ui.track_view import track_view_html
 
@@ -109,6 +111,43 @@ def racing_line(track_name: str):
     return build_racing_line(geometry(track_name))
 
 
+# Short names for the controller's 16x2 LCD.
+LCD_LABELS = {"mass_kg": "Mass", "power_hp": "Power", "drag_coefficient": "Drag Cd", "frontal_area_m2": "Front area",
+              "tire_friction": "Tyre grip", "max_braking_decel_mps2": "Max brake"}
+
+
+@st.cache_resource
+def controller() -> Controller:
+    """One Arduino controller per app process, tuning every setup slider."""
+    return Controller([Setting(key, LCD_LABELS[key], unit.replace("²", "2"), lo, hi, step)
+                       for key, (_, unit, lo, hi, _, step, _) in SLIDERS.items()])
+
+
+@st.cache_resource
+def arduino_link(port: str) -> ArduinoLink:
+    return ArduinoLink(port, controller())
+
+
+@st.cache_resource
+def hud_server() -> HudServer | None:
+    """Where the track view posts its live speed, lap and tyres for the LCD; None if the port is taken."""
+    try:
+        return HudServer(controller(), port=int(os.environ.get("RACELAB_HUD_PORT", "8765")))
+    except OSError:
+        return None
+
+
+@st.fragment(run_every=0.2)
+def controller_panel(port: str) -> None:
+    """Polls the controller; a knob or joystick change reruns the app, which applies it."""
+    link, ctrl = arduino_link(port), controller()
+    ctrl.sync({key: st.session_state[key] for key in SLIDERS})
+    detail = f" · tuning {ctrl.setting.label}" if ctrl.mode == "TUNE" else ""
+    st.caption(f"{link.status}{detail}")
+    if ctrl.has_changes():
+        st.rerun()
+
+
 def notice(text: str) -> None:
     st.markdown(f'<div class="rl-notice">{text}</div>', unsafe_allow_html=True)
 
@@ -136,6 +175,10 @@ st.set_page_config(page_title="RaceLab", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 for key, value in {**DEFAULTS, **PART_DEFAULTS, **TYRE_DEFAULT}.items():
     st.session_state.setdefault(key, value)
+st.session_state.setdefault("serial_port", os.environ.get("RACELAB_SERIAL_PORT", ""))
+if st.session_state["serial_port"].strip():
+    # Knob and joystick changes go in before the sliders are drawn, so the sliders show them.
+    st.session_state.update(controller().take_changes())
 
 with st.sidebar:
     st.markdown('<div class="rl-kicker">Car setup</div>', unsafe_allow_html=True)
@@ -160,6 +203,11 @@ with st.sidebar:
         st.slider(f"{label} ({unit})" if unit else label, lo, hi, step=step, format=number_format, key=key)
     st.button("Reset to default →", on_click=reset)
     body_color = st.color_picker("Body color", BodyPackage().color_hex)
+    st.markdown('<div class="rl-kicker">Controller</div>', unsafe_allow_html=True)
+    port = st.text_input("Arduino serial port", key="serial_port", placeholder="/dev/ttyACM0 or COM3",
+                         help="The RaceLab controller sketch (arduino/racelab_controller). Leave empty to disable.").strip()
+    if port:
+        controller_panel(port)
 
 setup = {key: st.session_state[key] for key in SLIDERS}
 parts = tuple(st.session_state[f"part_{c}"] for c in CATEGORIES)
@@ -191,6 +239,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+hud_url = None
+if port:
+    controller().set_summary(lap.lap_time_s, tyre.name, len(stint.laps))
+    hud_url = hud_server().url if hud_server() else None
+
 st.markdown('<h2 class="rl-h2">On track</h2>', unsafe_allow_html=True)
 track_geometry = geometry(track_name)
 # Trusted HTML: built here from engine output, no user-supplied markup.
@@ -200,7 +253,7 @@ st.iframe(
     track_view_html(
         track_geometry, stint, car_look, WEATHERS[weather_name],
         first_straight_m=TRACKS[track_name].segments[0].length_m, environment=TRACKS[track_name].environment,
-        seafront_m=TRACKS[track_name].seafront_m,
+        seafront_m=TRACKS[track_name].seafront_m, hud_url=hud_url,
     ),
     height=860,
 )

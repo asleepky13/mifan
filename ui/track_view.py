@@ -301,6 +301,7 @@ def scene(
     first_straight_m: float = 300.0,
     environment: str = "parkland",
     seafront_m: tuple[float, float] | None = None,
+    hud_url: str | None = None,
 ) -> dict:
     """Everything the canvas needs, in world metres, plus the overview camera.
 
@@ -309,7 +310,8 @@ def scene(
 
     ``car`` is ``{"body", "wheels", "engine", "color", "tyre", "tyre_color"}``: part keys, the tyre and #RRGGBB colours.
     ``environment`` (one of ``ENVIRONMENTS``) picks the ground, trees and surroundings; a harbour
-    puts the sea outside the ``seafront_m`` stretch.
+    puts the sea outside the ``seafront_m`` stretch. With ``hud_url`` the page posts its live
+    speed, lap and tyres there while running (the Arduino controller's LCD).
     """
     if environment not in ENVIRONMENTS:
         raise ValueError(f"environment must be one of {ENVIRONMENTS}, got {environment!r}")
@@ -365,6 +367,7 @@ def scene(
         "weather": {"name": weather.name, "rain": weather.rain_intensity},
         "car": car,
         "change_s": stint.change_s,
+        "hud_url": hud_url,
         "frames": {
             "x": np.round(playbacks[0].x_m, 3).tolist(),
             "y": np.round(playbacks[0].y_m, 3).tolist(),
