@@ -1,14 +1,14 @@
-// RaceLab controller: 16x2 I2C LCD, joystick with push button, B10K knob.
+// RaceLab controller: 16x2 I2C LCD and a joystick with push button.
 //
 // The board only reads its inputs and draws the text RaceLab sends; the app
 // (ui/controller.py) owns the mode, the selected setting and every value.
 //
 // Protocol, newline-terminated ASCII at 115200 baud:
-//   Arduino -> PC every 20 ms:  <knob>,<joy_x>,<joy_y>,<button>   (0-1023, button 0 = pressed)
+//   Arduino -> PC every 20 ms:  <joy_x>,<joy_y>,<button>          (0-1023, button 0 = pressed)
 //   PC -> Arduino:              L|<line 1>|<line 2>               (16 characters each)
 // Bytes 1-5 in a line are bar glyphs with 1-5 lit columns.
 //
-// Wiring: joystick X -> A0, Y -> A1, SW -> D2 (to GND when pressed); knob wiper -> A2;
+// Wiring: joystick X -> A0, Y -> A1, SW -> D2 (to GND when pressed);
 // LCD backpack SDA/SCL -> A4/A5 on an Uno (I2C address 0x27; try 0x3F if the screen stays blank).
 
 #include <Wire.h>
@@ -18,7 +18,6 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 const int pinJoyX = A0;
 const int pinJoyY = A1;
-const int pinKnob = A2;
 const int pinButton = 2;
 
 const unsigned long sendPeriodMs = 20;      // 50 Hz input stream
@@ -104,8 +103,6 @@ void loop() {
 
   if (millis() - lastSend >= sendPeriodMs) {
     lastSend = millis();
-    Serial.print(analogRead(pinKnob));
-    Serial.print(',');
     Serial.print(analogRead(pinJoyX));
     Serial.print(',');
     Serial.print(analogRead(pinJoyY));

@@ -139,7 +139,7 @@ def hud_server() -> HudServer | None:
 
 @st.fragment(run_every=0.2)
 def controller_panel(port: str) -> None:
-    """Polls the controller; a knob or joystick change reruns the app, which applies it."""
+    """Polls the controller; a joystick change reruns the app, which applies it."""
     link, ctrl = arduino_link(port), controller()
     ctrl.sync({key: st.session_state[key] for key in SLIDERS})
     detail = f" · tuning {ctrl.setting.label}" if ctrl.mode == "TUNE" else ""
@@ -177,7 +177,7 @@ for key, value in {**DEFAULTS, **PART_DEFAULTS, **TYRE_DEFAULT}.items():
     st.session_state.setdefault(key, value)
 st.session_state.setdefault("serial_port", os.environ.get("RACELAB_SERIAL_PORT", ""))
 if st.session_state["serial_port"].strip():
-    # Knob and joystick changes go in before the sliders are drawn, so the sliders show them.
+    # Joystick changes go in before the sliders are drawn, so the sliders show them.
     st.session_state.update(controller().take_changes())
 
 with st.sidebar:

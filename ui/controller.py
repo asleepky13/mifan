@@ -1,18 +1,18 @@
-"""Arduino controller: a 16x2 I2C LCD, a joystick with push button and a knob, over USB serial.
+"""Arduino controller: a 16x2 I2C LCD and a joystick with push button, over USB serial.
 
 The Arduino only reads its inputs and draws the text it is sent; all state lives here.
 
 Protocol (newline-terminated ASCII, 115200 baud):
-- Arduino -> PC, every 20 ms: ``<knob>,<joy_x>,<joy_y>,<button>`` with readings 0-1023
+- Arduino -> PC, every 20 ms: ``<joy_x>,<joy_y>,<button>`` with readings 0-1023
   and button 0 while pressed (``INPUT_PULLUP``).
 - PC -> Arduino: ``L|<line 1>|<line 2>``, 16 characters each. Bytes 1-5 are the bar
   glyphs (1 to 5 lit columns) the sketch registers with ``createChar``.
 
 Controls:
 - Button: switch between RACE (live speed, lap and tyres on the LCD) and TUNE.
-- TUNE: joystick up/down picks a setting. The knob sets it across that slider's range,
-  but only after it has been turned, so picking a setting never makes its value jump.
-  Joystick left/right nudges it by one slider step.
+- TUNE: joystick up/down picks a setting; left/right changes it by one slider step.
+  Holding left/right repeats, and after a while each repeat moves several steps, so
+  long ranges (mass: 100 steps) are quick to cross.
 """
 
 from __future__ import annotations
@@ -26,7 +26,10 @@ from typing import Callable, Sequence
 
 ADC_MAX = 1023
 JOY_LOW, JOY_HIGH = 300, 700  # outside this band the stick counts as pushed
-KNOB_PICKUP = 24  # counts the knob must move before it takes over a setting
+REPEAT_DELAY_S = 0.4  # hold left/right this long before it repeats
+REPEAT_PERIOD_S = 0.08
+FAST_AFTER_S = 1.5  # holding longer than this: each repeat moves FAST_STEPS
+FAST_STEPS = 5
 HUD_TIMEOUT_S = 2.0  # live readout from the track view counts as stale after this
 LCD_WIDTH = 16
 
@@ -52,18 +55,18 @@ class Setting:
         return f"{value:.{decimals}f} {self.unit}".strip()
 
 
-def parse_inputs(line: str) -> tuple[int, int, int, int] | None:
-    """``"512,510,505,1"`` -> (knob, joy_x, joy_y, button); ``None`` for anything else."""
+def parse_inputs(line: str) -> tuple[int, int, int] | None:
+    """``"510,505,1"`` -> (joy_x, joy_y, button); ``None`` for anything else."""
     parts = line.strip().split(",")
-    if len(parts) != 4:
+    if len(parts) != 3:
         return None
     try:
-        knob, jx, jy, button = (int(p) for p in parts)
+        jx, jy, button = (int(p) for p in parts)
     except ValueError:
         return None
-    if not all(0 <= v <= ADC_MAX for v in (knob, jx, jy)) or button not in (0, 1):
+    if not all(0 <= v <= ADC_MAX for v in (jx, jy)) or button not in (0, 1):
         return None
-    return knob, jx, jy, button
+    return jx, jy, button
 
 
 def bar(fraction: float, cells: int) -> str:
@@ -89,8 +92,7 @@ class Controller:
         self._pending: dict[str, float] = {}
         self._button = 1
         self._stick_y = self._stick_x = 0  # -1 / 0 / +1, for edge detection
-        self._anchor: int | None = None
-        self._armed = False
+        self._held_since = self._next_repeat = 0.0  # left/right auto-repeat
         self._hud: dict | None = None
         self._hud_at = 0.0
         self._summary: tuple[float, str, int] | None = None
@@ -99,39 +101,37 @@ class Controller:
     def setting(self) -> Setting:
         return self.settings[self.index]
 
-    def _select(self, knob: int) -> None:
-        self._anchor, self._armed = knob, False
-
     def _set(self, setting: Setting, value: float) -> None:
         value = setting.snap(value)
         if value != self.values[setting.key]:
             self.values[setting.key] = value
             self._pending[setting.key] = value
 
-    def feed(self, line: str) -> bool:
+    def feed(self, line: str, now: float | None = None) -> bool:
         """Apply one input frame from the Arduino; False if the line is not one."""
         frame = parse_inputs(line)
         if frame is None:
             return False
-        knob, jx, jy, button = frame
+        now = time.monotonic() if now is None else now
+        jx, jy, button = frame
         stick = lambda v: -1 if v < JOY_LOW else 1 if v > JOY_HIGH else 0
         with self._lock:
             if self._button == 1 and button == 0:  # press
                 self.mode = "TUNE" if self.mode == "RACE" else "RACE"
-                self._select(knob)
             self._button = button
             y, x = stick(jy), stick(jx)
             if self.mode == "TUNE":
                 if y and not self._stick_y:
                     self.index = (self.index + y) % len(self.settings)
-                    self._select(knob)
-                if x and not self._stick_x:
-                    self._set(self.setting, self.values[self.setting.key] + x * self.setting.step)
-                if self._anchor is not None and abs(knob - self._anchor) > KNOB_PICKUP:
-                    self._armed = True
-                if self._armed:
+                steps = 0
+                if x and x != self._stick_x:  # just pushed: one step now, repeats later
+                    self._held_since, self._next_repeat, steps = now, now + REPEAT_DELAY_S, 1
+                elif x and now >= self._next_repeat:
+                    self._next_repeat = now + REPEAT_PERIOD_S
+                    steps = FAST_STEPS if now - self._held_since >= FAST_AFTER_S else 1
+                if steps:
                     s = self.setting
-                    self._set(s, s.lo + knob / ADC_MAX * (s.hi - s.lo))
+                    self._set(s, self.values[s.key] + x * steps * s.step)
             self._stick_y, self._stick_x = y, x
         return True
 

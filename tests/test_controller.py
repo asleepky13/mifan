@@ -4,7 +4,10 @@ import unittest
 import urllib.request
 
 from ui.controller import (
-    KNOB_PICKUP,
+    FAST_AFTER_S,
+    FAST_STEPS,
+    REPEAT_DELAY_S,
+    REPEAT_PERIOD_S,
     ArduinoLink,
     Controller,
     HudServer,
@@ -17,8 +20,8 @@ SETTINGS = [Setting("mass_kg", "Mass", "kg", 800, 1800, 10), Setting("tire_frict
 MID = 512
 
 
-def frame(knob=MID, jx=MID, jy=MID, button=1) -> str:
-    return f"{knob},{jx},{jy},{button}"
+def frame(jx=MID, jy=MID, button=1) -> str:
+    return f"{jx},{jy},{button}"
 
 
 def tuning() -> Controller:
@@ -32,8 +35,8 @@ def tuning() -> Controller:
 
 class ProtocolTest(unittest.TestCase):
     def test_parse_inputs(self):
-        self.assertEqual(parse_inputs("512,0,1023,1\r\n"), (512, 0, 1023, 1))
-        for bad in ("", "1,2,3", "1,2,3,4,5", "a,2,3,1", "1024,2,3,1", "1,2,3,2", "L|text|text"):
+        self.assertEqual(parse_inputs("0,1023,1\r\n"), (0, 1023, 1))
+        for bad in ("", "1,2", "1,2,3,4", "a,2,1", "1024,2,1", "1,2,2", "L|text|text"):
             with self.subTest(bad=bad):
                 self.assertIsNone(parse_inputs(bad))
 
@@ -75,26 +78,24 @@ class ControllerTest(unittest.TestCase):
         c.feed(frame(jy=100))
         self.assertEqual(c.setting.key, "tire_friction")
 
-    def test_knob_takes_over_only_after_it_is_turned(self):
+    def test_holding_left_or_right_repeats_then_speeds_up(self):
         c = tuning()
-        c.feed(frame(knob=MID + KNOB_PICKUP - 1))  # jitter: ignored
-        self.assertEqual(c.take_changes(), {})
-        c.feed(frame(knob=1023))
-        self.assertEqual(c.take_changes(), {"mass_kg": 1800})
-        c.feed(frame(knob=0))
-        self.assertEqual(c.take_changes(), {"mass_kg": 800})
-        c.feed(frame(knob=0))
-        self.assertEqual(c.take_changes(), {})  # unchanged: nothing to send
-
-    def test_switching_setting_needs_a_new_turn(self):
-        c = tuning()
-        c.feed(frame(knob=1023))
-        c.take_changes()
-        c.feed(frame(knob=1023, jy=900))  # pick grip with the knob at full
-        c.feed(frame(knob=1023))
-        self.assertEqual(c.take_changes(), {})  # grip did not jump to 2.0
-        c.feed(frame(knob=400))
-        self.assertEqual(c.take_changes(), {"tire_friction": 0.8 + round(400 / 1023 * 1.2 / 0.05) * 0.05})
+        c.feed(frame(jx=900), now=0.0)  # push: one step at once
+        self.assertEqual(c.take_changes(), {"mass_kg": 1210})
+        c.feed(frame(jx=900), now=REPEAT_DELAY_S - 0.01)
+        self.assertEqual(c.take_changes(), {})  # not repeating yet
+        t, stepped = REPEAT_DELAY_S, []
+        while t < FAST_AFTER_S + 0.3:
+            c.feed(frame(jx=900), now=t)
+            stepped.append(c.take_changes().get("mass_kg"))
+            t += REPEAT_PERIOD_S
+        values = [v for v in stepped if v is not None]
+        steps = [(b - a) // 10 for a, b in zip([1210] + values, values)]
+        self.assertEqual(set(steps), {1, FAST_STEPS})          # single steps, then fast ones
+        self.assertEqual(steps, sorted(steps))                 # never back to slow while held
+        c.feed(frame(), now=t)
+        c.feed(frame(jx=900), now=t + 0.01)                    # released and pushed again: slow
+        self.assertEqual(c.take_changes(), {"mass_kg": values[-1] + 10})
 
     def test_joystick_x_nudges_one_step_and_clamps(self):
         c = tuning()
@@ -113,16 +114,16 @@ class ControllerTest(unittest.TestCase):
     def test_race_mode_ignores_tuning_inputs(self):
         c = Controller(SETTINGS)
         c.sync({"mass_kg": 1200, "tire_friction": 1.2})
-        for f in (frame(knob=0), frame(knob=1023, jx=900, jy=900)):
+        for f in (frame(jx=900), frame(jx=900, jy=900)):
             c.feed(f)
         self.assertEqual((c.mode, c.index, c.take_changes()), ("RACE", 0, {}))
 
     def test_sync_keeps_unsent_changes(self):
         c = tuning()
-        c.feed(frame(knob=1023))
+        c.feed(frame(jx=900))
         c.sync({"mass_kg": 1200})
         self.assertTrue(c.has_changes())
-        self.assertEqual(c.take_changes(), {"mass_kg": 1800})
+        self.assertEqual(c.take_changes(), {"mass_kg": 1210})
         c.sync({"mass_kg": 1500})  # moved in the browser
         self.assertEqual(c.values["mass_kg"], 1500)
 
@@ -171,11 +172,11 @@ class LinkTest(unittest.TestCase):
     def test_link_feeds_inputs_and_draws_the_lcd(self):
         c = Controller(SETTINGS)
         c.sync({"mass_kg": 1200, "tire_friction": 1.2})
-        fake = FakeSerial([frame(), frame(button=0), frame(), "garbage", frame(knob=1023)])
+        fake = FakeSerial([frame(), frame(button=0), frame(), "garbage", frame(jx=900)])
         link = ArduinoLink("fake", c, opener=lambda port, baud: fake, lcd_period_s=0.0)
         try:
             self.wait_for(lambda: c.has_changes())
-            self.assertEqual(c.take_changes(), {"mass_kg": 1800})
+            self.assertEqual(c.take_changes(), {"mass_kg": 1210})
             self.assertEqual(link.frames, 4)
             self.assertEqual(link.status, "Connected")
             self.wait_for(lambda: any(w.startswith(b"L|>Mass") for w in fake.written))
